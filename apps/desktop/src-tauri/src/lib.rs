@@ -113,6 +113,9 @@ pub fn run() {
             // chunks (dataset browser)
             commands::chunks::list_chunks_cmd,
             commands::chunks::filter_chunks_cmd,
+            // chat preview
+            commands::chat::chat_preview_send,
+            commands::chat::chat_preview_context,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

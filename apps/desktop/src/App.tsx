@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import { InputBar } from "./components/InputBar";
 import { ProjectRail } from "./components/ProjectRail";
 import { RightSidebar } from "./components/RightSidebar";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { TerminalPane, type TerminalHandle } from "./components/TerminalPane";
+import { onToolEvent } from "./lib/events";
 import { agent, settings } from "./lib/tauri";
 
 export function App() {
@@ -21,6 +23,38 @@ export function App() {
   useEffect(() => {
     settings.hasProviderKey("anthropic").then(setHasKey).catch(() => setHasKey(false));
   }, [settingsOpen]);
+
+  // Listen for ui_action events from the orchestrator: open the chat preview window
+  // when an agent tool requests it. The window itself is a separate Tauri WebviewWindow
+  // hash-routed at /#/chat-preview.
+  useEffect(() => {
+    const u = onToolEvent((ev) => {
+      if (ev.kind !== "ui_action") return;
+      if (ev.data.action !== "open_chat_preview") return;
+      const label = "chat-preview";
+      try {
+        const existing = WebviewWindow.getByLabel(label);
+        existing.then((w) => {
+          if (w) {
+            w.setFocus().catch(() => {});
+            return;
+          }
+          new WebviewWindow(label, {
+            url: "/#/chat-preview",
+            title: "NarrowMind chat preview",
+            width: 640,
+            height: 760,
+            resizable: true,
+          });
+        });
+      } catch {
+        // best-effort; Tauri will log create failures itself
+      }
+    });
+    return () => {
+      u.then((un) => un()).catch(() => {});
+    };
+  }, []);
 
   async function handleSend(text: string) {
     if (!termRef.current) return;

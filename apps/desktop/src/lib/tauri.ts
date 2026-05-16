@@ -97,3 +97,39 @@ export const chunks = {
       { sourceId, chunkIds, include },
     ),
 };
+
+// ---------------------------------------------------------------------------
+// Chat preview
+// ---------------------------------------------------------------------------
+
+export type ChatPreviewContext = {
+  project: string | null;
+  endpoint: string | null;
+  model: string | null;
+  filename: string | null;
+  running: boolean;
+};
+
+export type ChatHit = {
+  chunk_id: string;
+  doc_id: string;
+  source_id: string;
+  text: string;
+  token_count: number;
+  metadata: Record<string, unknown> | null;
+  _distance?: number;
+};
+
+export const chat = {
+  context: () => invoke<ChatPreviewContext>("chat_preview_context"),
+  send: (
+    query: string,
+    opts: { topK?: number; maxTokens?: number; temperature?: number } = {},
+  ) =>
+    invoke<void>("chat_preview_send", {
+      query,
+      topK: opts.topK ?? 5,
+      maxTokens: opts.maxTokens ?? 1024,
+      temperature: opts.temperature ?? 0.7,
+    }),
+};

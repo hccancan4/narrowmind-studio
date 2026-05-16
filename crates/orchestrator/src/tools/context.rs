@@ -38,12 +38,17 @@ pub fn new_selected_project(initial: Option<ProjectScope>) -> SelectedProject {
 /// Stream event emitted by a tool while executing. The orchestrator forwards each event
 /// straight to the UI as a Tauri event so users see live output (think `tail -f`) rather
 /// than waiting for the whole tool call to finish.
+///
+/// `UiAction` is the escape hatch for tools that need the front-end to do something
+/// imperative (e.g. open a floating chat-preview window). The orchestrator never opens
+/// windows itself — it emits a typed payload and the desktop layer interprets `kind`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", content = "data")]
 pub enum ToolEvent {
     Stdout(String),
     Stderr(String),
     Progress { message: String },
+    UiAction(serde_json::Value),
 }
 
 /// Sink the agent loop reads from; tool implementations clone this and push events.

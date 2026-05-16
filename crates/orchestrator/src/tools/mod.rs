@@ -12,6 +12,7 @@ pub mod fs;
 pub mod inference;
 pub mod ingest;
 pub mod projects;
+pub mod rag;
 pub mod registry;
 pub mod run_command;
 pub mod sandbox;

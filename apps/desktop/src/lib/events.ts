@@ -26,7 +26,18 @@ export type StopReason =
 export type ToolEvent =
   | { kind: "stdout"; data: string }
   | { kind: "stderr"; data: string }
-  | { kind: "progress"; data: { message: string } };
+  | { kind: "progress"; data: { message: string } }
+  | { kind: "ui_action"; data: UiActionPayload };
+
+export type UiActionPayload =
+  | {
+      action: "open_chat_preview";
+      project: string;
+      endpoint: string | null;
+      model: string | null;
+      filename: string | null;
+    }
+  | { action: string; [key: string]: unknown };
 
 export function onAgentEvent(handler: (e: AgentEvent) => void): Promise<UnlistenFn> {
   return listen<AgentEvent>("agent:event", (e) => handler(e.payload));

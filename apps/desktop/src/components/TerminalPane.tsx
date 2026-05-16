@@ -127,6 +127,11 @@ export function TerminalPane({ onReady }: Props) {
         case "progress":
           term.writeln(`${ANSI.cyan}… ${ev.data.message}${ANSI.reset}`);
           break;
+        case "ui_action":
+          // The actual open-chat-preview wiring lives on App.tsx, which subscribes to
+          // the same event channel. Here we just leave a breadcrumb in the transcript.
+          term.writeln(`${ANSI.cyan}… ui action: ${ev.data.action}${ANSI.reset}`);
+          break;
       }
     });
 
