@@ -87,44 +87,58 @@ impl Tool for IngestSource {
                           milestone. Writes <project>/sources/<id>/documents.jsonl + source.json. \
                           Per-file failures are recorded in source.json without aborting."
                 .into(),
+            // Anthropic tool input_schema does not support oneOf/allOf/anyOf at the top
+            // level (returns 400 invalid_request_error). Flatten into one object with every
+            // possible field; runtime serde deserialisation (the tagged IngestArgs enum
+            // below) still enforces which fields are required for which `type`. Per-type
+            // requirements live in the description so the model knows.
             input_schema: json!({
                 "type": "object",
-                "description": "Tagged union; `type` selects the source kind.",
-                "oneOf": [
-                    {
-                        "title": "local",
-                        "properties": {
-                            "type": { "const": "local" },
-                            "path": { "type": "string", "description": "Absolute path to a file or directory." },
-                            "source_id": { "type": "string", "description": "Optional fixed source id." }
-                        },
-                        "required": ["type", "path"]
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": ["local", "wikipedia", "url"],
+                        "description": "Source kind. Required."
                     },
-                    {
-                        "title": "wikipedia",
-                        "properties": {
-                            "type": { "const": "wikipedia" },
-                            "category": { "type": "string", "description": "Category name without the 'Category:' prefix." },
-                            "language": { "type": "string", "default": "en" },
-                            "max_depth": { "type": "integer", "minimum": 0, "maximum": 5, "default": 1 },
-                            "max_pages": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 50 },
-                            "source_id": { "type": "string" }
-                        },
-                        "required": ["type", "category"]
+                    "path": {
+                        "type": "string",
+                        "description": "type=local only. Absolute path to a file or directory; dirs walked recursively."
                     },
-                    {
-                        "title": "url",
-                        "properties": {
-                            "type": { "const": "url" },
-                            "url": { "type": "string", "description": "Absolute http(s) URL." },
-                            "max_depth": { "type": "integer", "minimum": 0, "maximum": 3, "default": 0 },
-                            "max_pages": { "type": "integer", "minimum": 1, "maximum": 200, "default": 1 },
-                            "same_domain_only": { "type": "boolean", "default": true },
-                            "source_id": { "type": "string" }
-                        },
-                        "required": ["type", "url"]
+                    "category": {
+                        "type": "string",
+                        "description": "type=wikipedia only. Category name without the 'Category:' prefix."
+                    },
+                    "language": {
+                        "type": "string",
+                        "default": "en",
+                        "description": "type=wikipedia only. ISO 639-1 code."
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 5,
+                        "description": "wikipedia: sub-category depth (default 1, max 5). url: BFS crawl depth (default 0, max 3)."
+                    },
+                    "max_pages": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "wikipedia: max articles (default 50). url: max pages crawled (default 1)."
+                    },
+                    "url": {
+                        "type": "string",
+                        "description": "type=url only. Absolute http(s) URL."
+                    },
+                    "same_domain_only": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "type=url only. Restrict crawl to seed URL's domain."
+                    },
+                    "source_id": {
+                        "type": "string",
+                        "description": "Optional fixed source id. Auto-generated when omitted."
                     }
-                ]
+                },
+                "required": ["type"]
             }),
         }
     }
