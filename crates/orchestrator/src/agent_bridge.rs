@@ -50,6 +50,7 @@ impl ToolDispatcher for OrchestratorDispatcher {
 /// `ingest_source` tool.
 #[must_use]
 pub fn default_registry() -> ToolRegistry {
+    use crate::tools::chunks::{FilterChunks, ListChunks};
     use crate::tools::fs::{ListDir, ReadFile, WriteFile};
     use crate::tools::ingest::IngestSource;
     use crate::tools::projects::{CreateProject, ListProjects, ProjectStatus};
@@ -62,6 +63,8 @@ pub fn default_registry() -> ToolRegistry {
     r.register(Arc::new(RunCommand));
     r.register(Arc::new(ProjectStatus));
     r.register(Arc::new(CreateProject));
+    r.register(Arc::new(ListChunks));
+    r.register(Arc::new(FilterChunks));
     r.register(Arc::new(ListProjects));
     r.register(Arc::new(IngestSource));
     r

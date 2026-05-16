@@ -1,5 +1,7 @@
 import { useState } from "react";
 
+import { DatasetBrowser } from "./DatasetBrowser";
+
 type Tab = "dataset" | "training" | "eval";
 
 const TABS: { id: Tab; label: string; phase: string }[] = [
@@ -26,34 +28,30 @@ export function RightSidebar() {
         ))}
       </nav>
       <div className="tab-body">
-        <h3>{TABS.find((t) => t.id === tab)?.label}</h3>
-        <p className="muted">
-          Mock placeholder. Real content lands in {TABS.find((t) => t.id === tab)?.phase} per
-          docs/ROADMAP.md.
-        </p>
-        {tab === "dataset" && (
-          <ul className="mock-list">
-            <li>chunks (virtualised list)</li>
-            <li>per-source filter</li>
-            <li>include / exclude toggles</li>
-            <li>synth Q&amp;A previews</li>
-          </ul>
-        )}
+        {tab === "dataset" && <DatasetBrowser />}
         {tab === "training" && (
-          <ul className="mock-list">
-            <li>live loss / lr / grad-norm chart</li>
-            <li>checkpoint list with "best" marker</li>
-            <li>GPU mem watch + ETA</li>
-            <li>log tail</li>
-          </ul>
+          <>
+            <h3>Training</h3>
+            <p className="muted">Live training metrics arrive in Phase 4 per docs/ROADMAP.md.</p>
+            <ul className="mock-list">
+              <li>live loss / lr / grad-norm chart</li>
+              <li>checkpoint list with "best" marker</li>
+              <li>GPU mem watch + ETA</li>
+              <li>log tail</li>
+            </ul>
+          </>
         )}
         {tab === "eval" && (
-          <ul className="mock-list">
-            <li>A/B/C/D base/RAG/LoRA/hybrid</li>
-            <li>1–5 manual rating UI</li>
-            <li>LLM-judge auto scores</li>
-            <li>markdown report export</li>
-          </ul>
+          <>
+            <h3>Eval</h3>
+            <p className="muted">A/B/C/D comparison + rating UI arrives in Phase 5.</p>
+            <ul className="mock-list">
+              <li>A/B/C/D base/RAG/LoRA/hybrid</li>
+              <li>1–5 manual rating UI</li>
+              <li>LLM-judge auto scores</li>
+              <li>markdown report export</li>
+            </ul>
+          </>
         )}
       </div>
     </aside>

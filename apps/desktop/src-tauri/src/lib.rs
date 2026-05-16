@@ -110,6 +110,9 @@ pub fn run() {
             commands::agent::agent_send_message,
             commands::agent::agent_reset,
             commands::agent::agent_turn_count,
+            // chunks (dataset browser)
+            commands::chunks::list_chunks_cmd,
+            commands::chunks::filter_chunks_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

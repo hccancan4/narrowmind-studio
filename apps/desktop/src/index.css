@@ -306,6 +306,101 @@ textarea:focus {
   margin: 0.25rem 0;
 }
 
+/* Dataset Browser */
+.dataset-browser {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.ds-toolbar {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+.ds-toolbar input {
+  flex: 1;
+}
+.ds-summary {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin: 0.2rem 0 0.4rem;
+}
+.ds-error {
+  background: rgba(239, 107, 107, 0.08);
+  border: 1px solid rgba(239, 107, 107, 0.3);
+  color: var(--danger);
+  padding: 0.35rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  margin-bottom: 0.4rem;
+}
+.ds-virtual-host {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #0c0c10;
+  position: relative;
+}
+.ds-empty {
+  padding: 1rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+.ds-row {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid rgba(42, 42, 48, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.ds-row.excluded {
+  opacity: 0.5;
+}
+.ds-row-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.ds-chunk-id {
+  font-family: ui-monospace, monospace;
+  color: var(--accent);
+}
+.ds-tokens {
+  font-variant-numeric: tabular-nums;
+}
+.ds-source {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ds-include-btn {
+  padding: 0 0.4rem;
+  font-size: 0.75rem;
+  background: transparent;
+}
+.ds-row.included .ds-include-btn {
+  color: var(--good);
+  border-color: var(--good);
+}
+.ds-row.excluded .ds-include-btn {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.ds-row-text {
+  font-size: 0.8rem;
+  color: var(--text);
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* Modal */
 
 .modal-backdrop {

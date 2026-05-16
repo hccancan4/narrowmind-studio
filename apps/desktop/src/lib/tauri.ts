@@ -49,3 +49,51 @@ export const debugCmd = {
       platform: string;
     }>("hello_round_trip_cmd", { name }),
 };
+
+// ---------------------------------------------------------------------------
+// Chunks (Dataset Browser)
+// ---------------------------------------------------------------------------
+
+export type ChunkRecord = {
+  chunk_id: string;
+  doc_id: string;
+  source_id: string;
+  text: string;
+  token_count: number;
+  sentence_range: [number, number];
+  include: boolean;
+  metadata: Record<string, unknown> | null;
+};
+
+export type ListChunksResponse = {
+  scanned: number;
+  matched: number;
+  returned: number;
+  offset: number;
+  limit: number;
+  chunks: ChunkRecord[];
+};
+
+export type ListChunksArgs = {
+  sourceId?: string;
+  search?: string;
+  show?: "all" | "included" | "excluded";
+  offset?: number;
+  limit?: number;
+};
+
+export const chunks = {
+  list: (args: ListChunksArgs = {}) =>
+    invoke<ListChunksResponse>("list_chunks_cmd", {
+      sourceId: args.sourceId ?? null,
+      search: args.search ?? null,
+      show: args.show ?? "all",
+      offset: args.offset ?? 0,
+      limit: args.limit ?? 200,
+    }),
+  filter: (sourceId: string, chunkIds: string[], include: boolean) =>
+    invoke<{ source_id: string; updated: number; missing: string[]; include: boolean }>(
+      "filter_chunks_cmd",
+      { sourceId, chunkIds, include },
+    ),
+};

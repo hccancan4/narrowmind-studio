@@ -5,6 +5,7 @@
 //! the actual work — the registry only routes and the loop only forwards the result back to
 //! the provider as a `tool_result` block.
 
+pub mod chunks;
 pub mod context;
 pub mod fs;
 pub mod ingest;

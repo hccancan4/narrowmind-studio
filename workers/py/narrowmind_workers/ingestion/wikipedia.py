@@ -19,11 +19,15 @@ from pathlib import Path
 import wikipediaapi
 
 from narrowmind_workers import __version__
-from narrowmind_workers.ingestion.models import Document, SourceManifest, SourceType
 from narrowmind_workers.ingestion._common import (
     fresh_doc_id,
     fresh_source_id,
     write_manifest_atomic,
+)
+from narrowmind_workers.ingestion.models import Document, SourceManifest, SourceType
+from narrowmind_workers.ingestion.pipeline import (
+    append_chunks_summary_to_manifest,
+    process_source,
 )
 
 log = logging.getLogger(__name__)
@@ -111,6 +115,10 @@ def ingest_wikipedia_category(
 
     manifest.document_count = docs_written
     write_manifest_atomic(source_dir / "source.json", manifest)
+
+    if docs_written > 0:
+        stats = process_source(project_root, manifest.source_id, language=language)
+        append_chunks_summary_to_manifest(project_root, manifest.source_id, stats)
     return manifest
 
 

@@ -21,6 +21,7 @@ dependencies = [
     # Chunking (Phase 2)
     "pysbd>=0.3",            # sentence boundary detection
     "tokenizers>=0.20",      # rust-backed XLM-RoBERTa tokenizer, no torch needed
+    "tiktoken>=0.8",         # cl100k_base for chunk-size estimation, offline (no HF download)
 ]
 
 [build-system]

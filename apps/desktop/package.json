@@ -17,6 +17,7 @@
     "test": "echo 'desktop tests: phase 1'"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.10.9",
     "@tauri-apps/api": "^2.1.1",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
