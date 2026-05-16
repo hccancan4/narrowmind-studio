@@ -1,0 +1,31 @@
+[project]
+name = "narrowmind-studio"
+version = "0.0.0"
+description = "NarrowMind Studio — workspace root for Python ML workers"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Hasancan", email = "hasanhccan@gmail.com" }]
+dependencies = []
+
+[tool.uv.workspace]
+members = ["workers/py"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.7",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "RUF"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["workers/py/tests"]
+pythonpath = ["workers/py"]
+addopts = "-q"

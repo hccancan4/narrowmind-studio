@@ -1,0 +1,23 @@
+{
+  "name": "narrowmind-studio",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Open-source desktop IDE for building Domain-Specific Language Models.",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@11.0.8",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=11.0.0"
+  },
+  "scripts": {
+    "tauri": "pnpm --filter @narrowmind/desktop tauri",
+    "dev": "pnpm --filter @narrowmind/desktop tauri dev",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "build": "pnpm --filter @narrowmind/desktop tauri build"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
