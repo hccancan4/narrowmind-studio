@@ -1,4 +1,4 @@
-//! NarrowMind Studio agent loop.
+//! `NarrowMind Studio` agent loop.
 //!
 //! Hosts the `Provider` trait, tool dispatcher, and streaming response handler.
 //! Phase 0 is a placeholder — the real implementation lands in Phase 1.
