@@ -30,6 +30,9 @@ wheels = [
 name = "narrowmind-studio"
 version = "0.0.0"
 source = { virtual = "." }
+dependencies = [
+    { name = "narrowmind-workers" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -38,6 +41,7 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [{ name = "narrowmind-workers", editable = "workers/py" }]
 
 [package.metadata.requires-dev]
 dev = [

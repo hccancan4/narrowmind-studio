@@ -6,10 +6,15 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Hasancan", email = "hasanhccan@gmail.com" }]
-dependencies = []
+dependencies = [
+    "narrowmind-workers",
+]
 
 [tool.uv.workspace]
 members = ["workers/py"]
+
+[tool.uv.sources]
+narrowmind-workers = { workspace = true }
 
 [dependency-groups]
 dev = [
