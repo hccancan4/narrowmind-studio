@@ -6,6 +6,7 @@
 pub mod error;
 pub mod hello;
 pub mod project;
+pub mod tools;
 pub mod worker;
 
 pub use error::WorkerError;
@@ -14,6 +15,7 @@ pub use project::{
     validate_name, ProjectConfig, ProjectError, ProjectStatus, ProjectStore, ProjectTier,
     ProviderConfig, SCHEMA_VERSION,
 };
+pub use tools::{ProjectScope, Tool, ToolContext, ToolDef, ToolError, ToolEvent, ToolRegistry, ToolResult};
 pub use worker::{PythonRunner, WorkerCommand};
 
 /// Crate version string, surfaced through Tauri so the UI can report build info.

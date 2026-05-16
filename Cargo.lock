@@ -1921,6 +1921,7 @@ dependencies = [
 name = "narrowmind-orchestrator"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "dirs 5.0.1",
  "serde",
