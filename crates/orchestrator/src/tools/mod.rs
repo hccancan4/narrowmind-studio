@@ -8,6 +8,7 @@
 pub mod build_dataset;
 pub mod chunks;
 pub mod context;
+pub mod eval;
 pub mod fs;
 pub mod inference;
 pub mod ingest;

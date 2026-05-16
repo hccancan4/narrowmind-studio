@@ -52,10 +52,12 @@ impl ToolDispatcher for OrchestratorDispatcher {
 pub fn default_registry() -> ToolRegistry {
     use crate::tools::build_dataset::BuildDataset;
     use crate::tools::chunks::{FilterChunks, ListChunks};
+    use crate::tools::eval::RunEval;
     use crate::tools::fs::{ListDir, ReadFile, WriteFile};
     use crate::tools::inference::{StartInferenceServer, StopInferenceServer};
     use crate::tools::ingest::IngestSource;
     use crate::tools::projects::{CreateProject, ListProjects, ProjectStatus};
+    use crate::tools::rag::{OpenChatPreview, QueryIndex, RagChat};
     use crate::tools::run_command::RunCommand;
     use crate::tools::synth_gen::GenerateSft;
 
@@ -74,5 +76,9 @@ pub fn default_registry() -> ToolRegistry {
     r.register(Arc::new(BuildDataset));
     r.register(Arc::new(StartInferenceServer));
     r.register(Arc::new(StopInferenceServer));
+    r.register(Arc::new(QueryIndex));
+    r.register(Arc::new(RagChat));
+    r.register(Arc::new(OpenChatPreview));
+    r.register(Arc::new(RunEval));
     r
 }
