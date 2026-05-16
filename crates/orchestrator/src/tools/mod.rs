@@ -9,6 +9,7 @@ pub mod context;
 pub mod fs;
 pub mod projects;
 pub mod registry;
+pub mod run_command;
 pub mod sandbox;
 
 pub use context::{ProjectScope, ToolContext, ToolEvent, ToolEventSink};
