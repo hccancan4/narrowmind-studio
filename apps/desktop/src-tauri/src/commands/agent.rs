@@ -44,7 +44,8 @@ pub async fn agent_send_message(
         state.project_store.clone(),
         tool_tx,
     )
-    .with_python_runner(state.python_runner.clone());
+    .with_python_runner(state.python_runner.clone())
+    .with_inference(state.inference.clone());
     let dispatcher = Arc::new(OrchestratorDispatcher::new(
         state.tool_registry.clone(),
         tool_ctx,

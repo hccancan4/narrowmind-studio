@@ -13,6 +13,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use tokio::sync::{mpsc::UnboundedSender, Mutex};
 
+use crate::inference::InferenceManager;
 use crate::project::ProjectStore;
 use crate::worker::PythonRunner;
 
@@ -61,6 +62,9 @@ pub struct ToolContext {
     /// (`workspace_root` + HF cache env baked in). `None` only in unit tests for tools that
     /// don't need a worker — fs and project tools never touch this field.
     pub python_runner: Option<Arc<PythonRunner>>,
+    /// Long-lived llama.cpp inference server manager. Set at app startup; `None` only in
+    /// unit tests. Used by `start_inference_server` / `stop_inference_server` / `rag_chat`.
+    pub inference: Option<Arc<InferenceManager>>,
 }
 
 impl ToolContext {
@@ -75,6 +79,7 @@ impl ToolContext {
             project_store,
             events,
             python_runner: None,
+            inference: None,
         }
     }
 
@@ -82,6 +87,13 @@ impl ToolContext {
     #[must_use]
     pub fn with_python_runner(mut self, runner: Arc<PythonRunner>) -> Self {
         self.python_runner = Some(runner);
+        self
+    }
+
+    /// Attach the singleton `InferenceManager` so inference / `rag_chat` tools can drive it.
+    #[must_use]
+    pub fn with_inference(mut self, manager: Arc<InferenceManager>) -> Self {
+        self.inference = Some(manager);
         self
     }
 

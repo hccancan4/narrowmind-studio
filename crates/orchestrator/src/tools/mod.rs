@@ -9,6 +9,7 @@ pub mod build_dataset;
 pub mod chunks;
 pub mod context;
 pub mod fs;
+pub mod inference;
 pub mod ingest;
 pub mod projects;
 pub mod registry;

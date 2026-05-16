@@ -1,18 +1,19 @@
 //! Shared Tauri state: project store, tool registry, selection, conversation history,
-//! pre-built Python runner.
+//! pre-built Python runner, long-lived inference server manager.
 //!
 //! `AgentSession` is rebuilt per `agent.send_message` call from the saved conversation
 //! history + the shared selected-project lock + the freshly-read provider key. The
 //! `python_runner` is built once at startup with `workspace_root` and HF cache env baked in,
-//! and cloned into every `ToolContext`.
+//! and cloned into every `ToolContext`. The `inference` manager is also a singleton: at
+//! most one llama.cpp server runs per app instance per Phase 3 decision F.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use narrowmind_agent::Message;
 use narrowmind_orchestrator::{
-    default_registry, hf_cache_env, new_selected_project, ProjectStore, PythonRunner,
-    SelectedProject, ToolRegistry,
+    default_registry, hf_cache_env, new_selected_project, InferenceManager, ProjectStore,
+    PythonRunner, SelectedProject, ToolRegistry, INFERENCE_IDLE_TTL,
 };
 use tokio::sync::Mutex;
 
@@ -25,6 +26,7 @@ pub struct AppState {
     pub selected_project: SelectedProject,
     pub conversation: Mutex<Vec<Message>>,
     pub python_runner: Arc<PythonRunner>,
+    pub inference: Arc<InferenceManager>,
 }
 
 impl AppState {
@@ -36,12 +38,17 @@ impl AppState {
                 runner = runner.with_env(k, v);
             }
         }
+        let inference = Arc::new(InferenceManager::new());
+        // Background watchdog: stops the server after IDLE_TTL of no rag_chat traffic.
+        // The handle is intentionally dropped — the task lives for the app lifetime.
+        let _watchdog = inference.as_ref().clone().spawn_ttl_watcher(INFERENCE_IDLE_TTL);
         Self {
             project_store,
             tool_registry: registry,
             selected_project: new_selected_project(None),
             conversation: Mutex::new(Vec::new()),
             python_runner: Arc::new(runner),
+            inference,
         }
     }
 }

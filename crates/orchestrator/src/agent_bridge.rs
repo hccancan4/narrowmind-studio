@@ -53,6 +53,7 @@ pub fn default_registry() -> ToolRegistry {
     use crate::tools::build_dataset::BuildDataset;
     use crate::tools::chunks::{FilterChunks, ListChunks};
     use crate::tools::fs::{ListDir, ReadFile, WriteFile};
+    use crate::tools::inference::{StartInferenceServer, StopInferenceServer};
     use crate::tools::ingest::IngestSource;
     use crate::tools::projects::{CreateProject, ListProjects, ProjectStatus};
     use crate::tools::run_command::RunCommand;
@@ -71,5 +72,7 @@ pub fn default_registry() -> ToolRegistry {
     r.register(Arc::new(IngestSource));
     r.register(Arc::new(GenerateSft));
     r.register(Arc::new(BuildDataset));
+    r.register(Arc::new(StartInferenceServer));
+    r.register(Arc::new(StopInferenceServer));
     r
 }

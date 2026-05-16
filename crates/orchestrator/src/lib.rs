@@ -7,6 +7,7 @@ pub mod agent_bridge;
 pub mod app_paths;
 pub mod error;
 pub mod hello;
+pub mod inference;
 pub mod project;
 pub mod secrets;
 pub mod tools;
@@ -16,6 +17,10 @@ pub use agent_bridge::{default_registry, OrchestratorDispatcher};
 pub use app_paths::{app_data_root, hf_cache_dir, hf_cache_env, AppPathError};
 pub use error::WorkerError;
 pub use hello::{hello_round_trip, HelloResult};
+pub use inference::{
+    InferenceError, InferenceManager, InferenceStatus, ModelSpec,
+    DEFAULT_PORT as INFERENCE_DEFAULT_PORT, IDLE_TTL as INFERENCE_IDLE_TTL,
+};
 pub use project::{
     validate_name, ProjectConfig, ProjectError, ProjectStatus, ProjectStore, ProjectTier,
     ProviderConfig, SynthConfig, SCHEMA_VERSION,
