@@ -24,6 +24,10 @@ from narrowmind_workers.ingestion._common import (
 )
 from narrowmind_workers.ingestion.dispatch import handler_for, supported_extensions
 from narrowmind_workers.ingestion.models import Document, SourceManifest, SourceType
+from narrowmind_workers.ingestion.pipeline import (
+    append_chunks_summary_to_manifest,
+    process_source,
+)
 
 log = logging.getLogger(__name__)
 
@@ -86,6 +90,12 @@ def ingest_local_path(
 
     manifest.document_count = docs_written
     write_manifest_atomic(source_dir / "source.json", manifest)
+
+    # Drive cleaning + chunking so a single ingest_source call ends with chunks.jsonl
+    # on disk -- what every downstream tool (list_chunks, generate_sft) reads from.
+    if docs_written > 0:
+        stats = process_source(project_root, manifest.source_id)
+        append_chunks_summary_to_manifest(project_root, manifest.source_id, stats)
     return manifest
 
 
