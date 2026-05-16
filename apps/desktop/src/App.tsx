@@ -1,67 +1,84 @@
-import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-type HelloResponse = {
-  message: string;
-  worker_version: string;
-  worker_pid: number;
-  python_version: string;
-  platform: string;
-};
-
-type LogLine = { kind: "out" | "in" | "err"; text: string };
+import { InputBar } from "./components/InputBar";
+import { ProjectRail } from "./components/ProjectRail";
+import { RightSidebar } from "./components/RightSidebar";
+import { SettingsDialog } from "./components/SettingsDialog";
+import { TerminalPane, type TerminalHandle } from "./components/TerminalPane";
+import { agent, settings } from "./lib/tauri";
 
 export function App() {
-  const [log, setLog] = useState<LogLine[]>([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [selectedProject, setSelectedProject] = useState<string | null>(null);
+  const [hasKey, setHasKey] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
+  const termRef = useRef<TerminalHandle | null>(null);
 
-  function append(...lines: LogLine[]) {
-    setLog((prev) => [...prev, ...lines]);
-  }
+  const onTerminalReady = useCallback((handle: TerminalHandle) => {
+    termRef.current = handle;
+  }, []);
 
-  async function runHello() {
+  useEffect(() => {
+    settings.hasProviderKey("anthropic").then(setHasKey).catch(() => setHasKey(false));
+  }, [settingsOpen]);
+
+  async function handleSend(text: string) {
+    if (!termRef.current) return;
+    termRef.current.writeUserPrompt(text);
     setBusy(true);
-    append({ kind: "out", text: "> hello round-trip starting (Tauri → Rust orchestrator → Python worker)" });
     try {
-      const result = await invoke<HelloResponse>("hello_round_trip_cmd", { name: "tauri" });
-      append(
-        { kind: "in", text: `< ${result.message}` },
-        { kind: "in", text: `  worker_version=${result.worker_version}` },
-        { kind: "in", text: `  worker_pid=${result.worker_pid}` },
-        { kind: "in", text: `  python_version=${result.python_version}` },
-        { kind: "in", text: `  platform=${result.platform}` },
-      );
+      await agent.sendMessage(text);
     } catch (e) {
-      append({ kind: "err", text: `ERROR: ${e instanceof Error ? e.message : String(e)}` });
+      termRef.current.writeError(`${e}`);
     } finally {
       setBusy(false);
     }
   }
 
+  const ready = Boolean(selectedProject) && hasKey === true;
+  const placeholder = !hasKey
+    ? "set your Anthropic API key in Settings first (⚙)"
+    : !selectedProject
+      ? "select or create a project in the left rail first"
+      : undefined;
+
   return (
-    <main>
-      <header>
-        <h1>
-          <span className="tag">phase 0</span>
-          NarrowMind Studio
-        </h1>
-        <p>
-          Bootstrap shell. The debug button below spawns a Python worker via the Rust orchestrator
-          and round-trips a JSON-RPC <code>hello</code> call.
-        </p>
-      </header>
+    <div className="app">
+      <ProjectRail
+        onOpenSettings={() => setSettingsOpen(true)}
+        onSelectionChanged={setSelectedProject}
+      />
 
-      <div>
-        <button type="button" onClick={runHello} disabled={busy}>
-          {busy ? "Running…" : "Run hello round-trip"}
-        </button>
-      </div>
+      <main className="center">
+        <header className="banner">
+          <span className="tag">phase 1</span>
+          {selectedProject ? (
+            <span>
+              project <strong>{selectedProject}</strong>
+            </span>
+          ) : (
+            <span className="muted">no project selected</span>
+          )}
+          <span className="spacer" />
+          {hasKey === false && (
+            <button
+              type="button"
+              className="primary"
+              onClick={() => setSettingsOpen(true)}
+            >
+              Set API key
+            </button>
+          )}
+        </header>
 
-      <pre>
-        {log.length === 0
-          ? "(no calls yet — click the button to round-trip a hello)"
-          : log.map((l) => l.text).join("\n")}
-      </pre>
-    </main>
+        <TerminalPane onReady={onTerminalReady} />
+
+        <InputBar disabled={busy || !ready} placeholder={placeholder} onSubmit={handleSend} />
+      </main>
+
+      <RightSidebar />
+
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+    </div>
   );
 }
