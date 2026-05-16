@@ -51,7 +51,7 @@ impl Tool for ReadFile {
 
     async fn invoke(&self, ctx: &ToolContext, args: Value) -> Result<ToolResult, ToolError> {
         let args: ReadFileArgs = parse_args("read_file", args)?;
-        let project = ctx.project.as_ref().ok_or(ToolError::NoProject)?;
+        let project = ctx.current_project().await.ok_or(ToolError::NoProject)?;
         let abs = resolve_within(&project.root, &args.path)?;
         if !abs.is_file() {
             return Err(ToolError::Exec {
@@ -123,7 +123,7 @@ impl Tool for WriteFile {
 
     async fn invoke(&self, ctx: &ToolContext, args: Value) -> Result<ToolResult, ToolError> {
         let args: WriteFileArgs = parse_args("write_file", args)?;
-        let project = ctx.project.as_ref().ok_or(ToolError::NoProject)?;
+        let project = ctx.current_project().await.ok_or(ToolError::NoProject)?;
         let abs = resolve_within(&project.root, &args.path)?;
         if args.create_parents {
             if let Some(parent) = abs.parent() {
@@ -177,7 +177,7 @@ impl Tool for ListDir {
 
     async fn invoke(&self, ctx: &ToolContext, args: Value) -> Result<ToolResult, ToolError> {
         let args: ListDirArgs = parse_args("list_dir", args)?;
-        let project = ctx.project.as_ref().ok_or(ToolError::NoProject)?;
+        let project = ctx.current_project().await.ok_or(ToolError::NoProject)?;
         let abs = resolve_within(&project.root, args.path.as_deref().unwrap_or("."))?;
         if !abs.is_dir() {
             return Err(ToolError::Exec {
@@ -251,16 +251,19 @@ mod tests {
 
     use super::*;
     use crate::project::ProjectStore;
-    use crate::tools::context::ProjectScope;
+    use crate::tools::context::{new_selected_project, ProjectScope};
 
-    fn ctx_with(root: std::path::PathBuf) -> (ToolContext, mpsc::UnboundedReceiver<crate::tools::ToolEvent>) {
+    fn ctx_with(
+        root: std::path::PathBuf,
+    ) -> (ToolContext, mpsc::UnboundedReceiver<crate::tools::ToolEvent>) {
         let store = Arc::new(ProjectStore::new(root.parent().unwrap()));
         let (tx, rx) = mpsc::unbounded_channel();
         let scope = ProjectScope {
             name: "demo".into(),
             root,
         };
-        (ToolContext::new(Some(scope), store, tx), rx)
+        let selected = new_selected_project(Some(scope));
+        (ToolContext::new(selected, store, tx), rx)
     }
 
     #[tokio::test]
@@ -315,7 +318,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = Arc::new(ProjectStore::new(tmp.path()));
         let (tx, _rx) = mpsc::unbounded_channel();
-        let ctx = ToolContext::new(None, store, tx);
+        let selected = new_selected_project(None);
+        let ctx = ToolContext::new(selected, store, tx);
         let err = WriteFile
             .invoke(&ctx, json!({ "path": "x.txt", "content": "y" }))
             .await

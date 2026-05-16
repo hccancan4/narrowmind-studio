@@ -12,5 +12,7 @@ pub mod registry;
 pub mod run_command;
 pub mod sandbox;
 
-pub use context::{ProjectScope, ToolContext, ToolEvent, ToolEventSink};
+pub use context::{
+    new_selected_project, ProjectScope, SelectedProject, ToolContext, ToolEvent, ToolEventSink,
+};
 pub use registry::{Tool, ToolDef, ToolError, ToolRegistry, ToolResult};

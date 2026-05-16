@@ -1,9 +1,8 @@
 //! Project lifecycle commands invoked by the left rail.
 
+use narrowmind_orchestrator::{ProjectScope, ProjectTier, ProviderConfig};
 use serde::Serialize;
 use tauri::State;
-
-use narrowmind_orchestrator::{ProjectStatus, ProjectTier, ProviderConfig};
 
 use crate::state::AppState;
 
@@ -72,12 +71,11 @@ pub async fn delete_project(state: State<'_, AppState>, name: String) -> Result<
         .project_store
         .delete(&name)
         .map_err(|e| e.to_string())?;
-    // If the deleted project was selected, clear the selection so the next agent message
+    // If the deleted project was selected, clear the selection so the next agent turn
     // doesn't try to sandbox into a missing directory.
     let mut sel = state.selected_project.lock().await;
-    if sel.as_deref() == Some(&name) {
+    if sel.as_ref().is_some_and(|s| s.name == name) {
         *sel = None;
-        // Drop the conversation history too — it refers to a project that no longer exists.
         state.conversation.lock().await.clear();
     }
     Ok(())
@@ -85,15 +83,19 @@ pub async fn delete_project(state: State<'_, AppState>, name: String) -> Result<
 
 #[tauri::command]
 pub async fn select_project(state: State<'_, AppState>, name: String) -> Result<(), String> {
-    // Validate the project exists before flipping the selection — a typo in the UI should
-    // surface immediately, not on the next agent turn.
+    // Validate the project exists before flipping the selection.
     let _cfg = state.project_store.get(&name).map_err(|e| e.to_string())?;
+    let root = state.project_store.project_dir(&name);
+    let scope = ProjectScope { name: name.clone(), root };
+
     let mut sel = state.selected_project.lock().await;
-    let switching_away = sel.as_deref() != Some(&name);
-    *sel = Some(name);
+    let switching_away = sel.as_ref().is_some_and(|s| s.name != name);
+    *sel = Some(scope);
+    drop(sel);
+
     if switching_away {
-        // Conversation history is per-project: switching projects starts a new conversation
-        // so the model doesn't see tool_use ids from a previous sandbox.
+        // Per-project conversation history; switching starts fresh so tool_use ids from one
+        // sandbox can't bleed into another.
         state.conversation.lock().await.clear();
     }
     Ok(())
@@ -101,7 +103,12 @@ pub async fn select_project(state: State<'_, AppState>, name: String) -> Result<
 
 #[tauri::command]
 pub async fn current_project(state: State<'_, AppState>) -> Result<Option<String>, String> {
-    Ok(state.selected_project.lock().await.clone())
+    Ok(state
+        .selected_project
+        .lock()
+        .await
+        .as_ref()
+        .map(|s| s.name.clone()))
 }
 
 #[tauri::command]
@@ -116,6 +123,3 @@ pub async fn project_status(
         tier: format!("{:?}", cfg.tier).to_lowercase(),
     })
 }
-
-#[allow(dead_code)] // re-exported for completeness; the UI doesn't yet expose archive
-pub const _STATUS_ARCHIVED: ProjectStatus = ProjectStatus::Archived;

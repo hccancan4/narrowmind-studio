@@ -20,7 +20,8 @@ pub use project::{
 };
 pub use secrets::{SecretError, SecretStore};
 pub use tools::{
-    ProjectScope, Tool, ToolContext, ToolDef, ToolError, ToolEvent, ToolRegistry, ToolResult,
+    new_selected_project, ProjectScope, SelectedProject, Tool, ToolContext, ToolDef, ToolError,
+    ToolEvent, ToolRegistry, ToolResult,
 };
 pub use worker::{PythonRunner, WorkerCommand};
 

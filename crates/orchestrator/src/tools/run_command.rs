@@ -81,7 +81,7 @@ impl Tool for RunCommand {
                 tool: "run_command".into(),
                 reason: e.to_string(),
             })?;
-        let project = ctx.project.as_ref().ok_or(ToolError::NoProject)?;
+        let project = ctx.current_project().await.ok_or(ToolError::NoProject)?;
         let deadline_secs = args.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS);
 
         info!(
@@ -242,7 +242,7 @@ mod tests {
 
     use super::*;
     use crate::project::ProjectStore;
-    use crate::tools::context::ProjectScope;
+    use crate::tools::context::{new_selected_project, ProjectScope};
     use crate::tools::ToolEvent;
 
     fn python_available() -> bool {
@@ -261,7 +261,8 @@ mod tests {
             name: "demo".into(),
             root,
         };
-        (ToolContext::new(Some(scope), store, tx), rx)
+        let selected = new_selected_project(Some(scope));
+        (ToolContext::new(selected, store, tx), rx)
     }
 
     #[tokio::test]
@@ -386,7 +387,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = Arc::new(ProjectStore::new(tmp.path()));
         let (tx, _rx) = mpsc::unbounded_channel();
-        let ctx = ToolContext::new(None, store, tx);
+        let selected = new_selected_project(None);
+        let ctx = ToolContext::new(selected, store, tx);
 
         let err = RunCommand
             .invoke(&ctx, json!({ "command": "echo", "args": ["hi"] }))

@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::info;
 
-use super::context::ToolContext;
+use super::context::{ProjectScope, ToolContext};
 use super::registry::{Tool, ToolDef, ToolError, ToolResult};
 use crate::project::{ProjectTier, ProviderConfig};
 
@@ -34,7 +34,7 @@ impl Tool for ProjectStatus {
     }
 
     async fn invoke(&self, ctx: &ToolContext, _args: Value) -> Result<ToolResult, ToolError> {
-        match ctx.project.as_ref() {
+        match ctx.current_project().await {
             None => Ok(ToolResult::text("no project selected")
                 .with_structured(json!({ "selected": false }))),
             Some(scope) => {
@@ -107,10 +107,20 @@ impl Tool for CreateProject {
             model: args.model.unwrap_or_else(|| "claude-opus-4-7".into()),
         };
         let cfg = ctx.project_store.create(&args.name, tier, provider)?;
-        info!(project = %cfg.name, tier = ?cfg.tier, "create_project");
         let root = ctx.project_store.project_dir(&cfg.name);
+        info!(project = %cfg.name, tier = ?cfg.tier, root = %root.display(), "create_project");
+
+        // Auto-select the newly created project so any subsequent file / run tool calls in
+        // the same agent turn land inside it. This is what makes "create project X and
+        // write a hello file in it" work as a single user prompt.
+        ctx.set_project(Some(ProjectScope {
+            name: cfg.name.clone(),
+            root: root.clone(),
+        }))
+        .await;
+
         Ok(ToolResult::text(format!(
-            "created project `{}` at {}",
+            "created project `{}` at {} (now the active project)",
             cfg.name,
             root.display()
         ))
@@ -118,6 +128,7 @@ impl Tool for CreateProject {
             "name": cfg.name,
             "tier": cfg.tier,
             "root": root,
+            "selected": true,
         })))
     }
 }
@@ -211,12 +222,14 @@ mod tests {
 
     use super::*;
     use crate::project::ProjectStore;
+    use crate::tools::context::new_selected_project;
 
     fn root_ctx() -> (TempDir, ToolContext) {
         let tmp = TempDir::new().unwrap();
         let store = Arc::new(ProjectStore::new(tmp.path()));
         let (tx, _rx) = mpsc::unbounded_channel();
-        let ctx = ToolContext::new(None, store, tx);
+        let selected = new_selected_project(None);
+        let ctx = ToolContext::new(selected, store, tx);
         (tmp, ctx)
     }
 
@@ -232,12 +245,11 @@ mod tests {
         let list = ListProjects.invoke(&ctx, json!({})).await.unwrap();
         assert!(list.content.contains("alpha"));
 
-        // status with no project selected
+        // create_project auto-selects, so status now reflects the new project.
         let status = ProjectStatus.invoke(&ctx, json!({})).await.unwrap();
-        assert_eq!(
-            status.structured.unwrap(),
-            json!({ "selected": false })
-        );
+        let structured = status.structured.unwrap();
+        assert_eq!(structured["name"], "alpha");
+        assert_eq!(structured["tier"], "hybrid");
     }
 
     #[tokio::test]
@@ -248,5 +260,18 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, ToolError::BadInput { .. }));
+    }
+
+    #[tokio::test]
+    async fn create_auto_selects_new_project() {
+        let (_tmp, ctx) = root_ctx();
+        assert!(ctx.current_project().await.is_none());
+        CreateProject
+            .invoke(&ctx, json!({ "name": "fresh", "tier": "rag" }))
+            .await
+            .unwrap();
+        let selected = ctx.current_project().await.expect("auto-selected");
+        assert_eq!(selected.name, "fresh");
+        assert!(selected.root.ends_with("fresh"));
     }
 }
