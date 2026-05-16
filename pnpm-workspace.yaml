@@ -2,3 +2,8 @@ packages:
   - "apps/*"
   - "packages/*"
   - "examples/*"
+
+# Allow native install scripts for trusted build-time tooling.
+# esbuild compiles its native binary at install time and is depended on by Vite.
+allowBuilds:
+  esbuild: true
