@@ -41,6 +41,18 @@ pub struct ProjectConfig {
     pub base_model: String,
     /// Which LLM provider drives the *agent loop* (not the trained model).
     pub provider: ProviderConfig,
+    /// Synthetic Q&A generation config (set by `generate_sft` on first run).
+    /// Optional + back-compat: old project.toml files without this section still parse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub synth: Option<SynthConfig>,
+}
+
+/// Recorded once per project on the first `generate_sft` run so subsequent runs reproduce
+/// the same train/eval split. Per Phase 2 decision F.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SynthConfig {
+    /// Seed used to shuffle Q&A pairs before splitting into train + held-out eval.
+    pub split_seed: u64,
 }
 
 /// Lifecycle state of a project.
@@ -87,6 +99,7 @@ impl ProjectConfig {
             tier,
             base_model: String::new(),
             provider,
+            synth: None,
         }
     }
 }

@@ -18,7 +18,7 @@ pub use error::WorkerError;
 pub use hello::{hello_round_trip, HelloResult};
 pub use project::{
     validate_name, ProjectConfig, ProjectError, ProjectStatus, ProjectStore, ProjectTier,
-    ProviderConfig, SCHEMA_VERSION,
+    ProviderConfig, SynthConfig, SCHEMA_VERSION,
 };
 pub use secrets::{SecretError, SecretStore};
 pub use tools::{

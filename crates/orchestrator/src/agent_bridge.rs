@@ -55,6 +55,7 @@ pub fn default_registry() -> ToolRegistry {
     use crate::tools::ingest::IngestSource;
     use crate::tools::projects::{CreateProject, ListProjects, ProjectStatus};
     use crate::tools::run_command::RunCommand;
+    use crate::tools::synth_gen::GenerateSft;
 
     let mut r = ToolRegistry::new();
     r.register(Arc::new(ReadFile));
@@ -67,5 +68,6 @@ pub fn default_registry() -> ToolRegistry {
     r.register(Arc::new(FilterChunks));
     r.register(Arc::new(ListProjects));
     r.register(Arc::new(IngestSource));
+    r.register(Arc::new(GenerateSft));
     r
 }

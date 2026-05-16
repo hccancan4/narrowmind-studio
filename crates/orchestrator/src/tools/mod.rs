@@ -13,6 +13,7 @@ pub mod projects;
 pub mod registry;
 pub mod run_command;
 pub mod sandbox;
+pub mod synth_gen;
 
 pub use context::{
     new_selected_project, ProjectScope, SelectedProject, ToolContext, ToolEvent, ToolEventSink,

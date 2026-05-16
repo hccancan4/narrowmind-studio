@@ -42,6 +42,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 uuid = { version = "1.11", features = ["v4", "serde"] }
 # os-aware standard directories (data_dir / config_dir on win/mac/linux)
 dirs = "5.0"
+# rng for seeded train/eval splits
+rand = "0.8"
+rand_chacha = "0.3"
 # tauri
 tauri = { version = "2.1" }
 tauri-build = { version = "2.0" }
