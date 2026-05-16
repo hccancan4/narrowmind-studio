@@ -40,6 +40,9 @@ Thumbs.db
 # Local dev env helper (per-machine paths)
 .nm-env.ps1
 
+# Temp directories some Windows installers / Kaspersky workspace scans leave behind
+_tmp_*
+
 # NarrowMind workspace project state (lives outside the repo by default,
 # but ignore if a user symlinks for testing)
 projects/
