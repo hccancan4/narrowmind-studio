@@ -1,0 +1,23 @@
+* text=auto eol=lf
+
+# Binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.gguf binary
+*.safetensors binary
+*.bin binary
+*.onnx binary
+
+# Lockfiles — explicit LF
+pnpm-lock.yaml text eol=lf
+Cargo.lock text eol=lf
+uv.lock text eol=lf
+
+# Windows-only scripts keep CRLF
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf

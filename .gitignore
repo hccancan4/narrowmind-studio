@@ -1,0 +1,45 @@
+# Node / pnpm
+node_modules/
+.pnpm-store/
+dist/
+*.tsbuildinfo
+
+# Rust
+target/
+**/target/
+
+# Python / uv
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.uv-cache/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Tauri
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/target/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.local
+*.pem
+
+# Claude Code (per-user state)
+.claude/
+
+# Local dev env helper (per-machine paths)
+.nm-env.ps1
+
+# NarrowMind workspace project state (lives outside the repo by default,
+# but ignore if a user symlinks for testing)
+projects/
