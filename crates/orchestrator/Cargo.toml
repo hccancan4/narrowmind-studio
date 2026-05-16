@@ -15,6 +15,9 @@ unsafe_code = "forbid"
 pedantic = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
 missing_errors_doc = "allow"
+# ProjectError carries toml::de::Error (~256 bytes); boxing every variant is over-engineering
+# for an enum that's already on a cold path.
+result_large_err = "allow"
 
 [dependencies]
 tokio = { workspace = true }
@@ -22,6 +25,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+toml = { workspace = true }
+chrono = { workspace = true }
+dirs = { workspace = true }
 
 [dev-dependencies]
+tempfile = "3.13"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
