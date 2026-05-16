@@ -13,7 +13,7 @@ use std::sync::Arc;
 use narrowmind_agent::Message;
 use narrowmind_orchestrator::{
     default_registry, hf_cache_env, new_selected_project, InferenceManager, ProjectStore,
-    PythonRunner, SelectedProject, ToolRegistry, INFERENCE_IDLE_TTL,
+    PythonRunner, SelectedProject, ToolRegistry,
 };
 use tokio::sync::Mutex;
 
@@ -38,10 +38,11 @@ impl AppState {
                 runner = runner.with_env(k, v);
             }
         }
+        // NB: do NOT spawn the TTL watchdog here — AppState::new runs synchronously
+        // before Tauri brings up the tokio runtime, and spawn_ttl_watcher calls
+        // tokio::spawn under the hood. The watchdog is started from the Tauri .setup()
+        // hook in lib.rs::run() once the runtime is available.
         let inference = Arc::new(InferenceManager::new());
-        // Background watchdog: stops the server after IDLE_TTL of no rag_chat traffic.
-        // The handle is intentionally dropped — the task lives for the app lifetime.
-        let _watchdog = inference.as_ref().clone().spawn_ttl_watcher(INFERENCE_IDLE_TTL);
         Self {
             project_store,
             tool_registry: registry,

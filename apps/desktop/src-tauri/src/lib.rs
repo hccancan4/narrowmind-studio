@@ -92,6 +92,20 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(app_state)
+        .setup(|app| {
+            // Tauri 2 brings up its tokio runtime before .setup() runs, so this is the
+            // earliest safe point to spawn long-lived async tasks. We do it here rather
+            // than inside AppState::new() (which runs in sync context and would panic
+            // with 'there is no reactor running').
+            use tauri::Manager as _;
+            let state: tauri::State<'_, AppState> = app.state();
+            let _watchdog = state
+                .inference
+                .as_ref()
+                .clone()
+                .spawn_ttl_watcher(narrowmind_orchestrator::INFERENCE_IDLE_TTL);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             hello_round_trip_cmd,
             orchestrator_version,
