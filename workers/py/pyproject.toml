@@ -22,7 +22,32 @@ dependencies = [
     "pysbd>=0.3",            # sentence boundary detection
     "tokenizers>=0.20",      # rust-backed XLM-RoBERTa tokenizer, no torch needed
     "tiktoken>=0.8",         # cl100k_base for chunk-size estimation, offline (no HF download)
+    # Phase 3 — RAG (embedding + vector store)
+    "torch>=2.2",                  # CPU-only via [tool.uv.sources] below
+    "sentence-transformers>=3.0",  # BGE-small embedder, lazy-loaded on first build_dataset
+    "lancedb>=0.13",               # embedded vector store, file-backed (no service)
+    "pyarrow>=17.0",               # lancedb dep; pinned so resolver doesn't pick incompatible
+    # Phase 3 — inference (llama.cpp HTTP server)
+    "llama-cpp-python[server]>=0.3",  # CUDA wheel via [tool.uv.sources] below
 ]
+
+# Force a CPU-only torch wheel so the default ~2 GB CUDA wheel doesn't bloat the install
+# (BGE-small runs fine on CPU). llama-cpp-python pulls from the CUDA 12.4 wheel index so we
+# get GPU inference on RTX 3070 out of the box — falls back to CPU at runtime when CUDA
+# isn't available.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+llama-cpp-python = { index = "llama-cuda" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "llama-cuda"
+url = "https://abetlen.github.io/llama-cpp-python/whl/cu124"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]
