@@ -1,0 +1,9 @@
+The hard problem of consciousness
+====================================
+
+This is a sample plain text fixture for ingestion handler tests.
+It has two paragraphs separated by a blank line so the chunker has
+something to bite on later.
+
+Second paragraph: anything we put here is preserved as-is by the
+text handler. No markdown stripping happens at ingestion time.

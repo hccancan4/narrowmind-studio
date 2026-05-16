@@ -86,7 +86,9 @@ pub fn run() {
     let store_root = ProjectStore::default_root()
         .expect("could not determine default project root for this OS");
     let project_store = Arc::new(ProjectStore::new(store_root));
-    let app_state = AppState::new(project_store);
+    let ws_root =
+        workspace_root().expect("could not locate workspace root from desktop crate manifest path");
+    let app_state = AppState::new(project_store, ws_root);
 
     tauri::Builder::default()
         .manage(app_state)

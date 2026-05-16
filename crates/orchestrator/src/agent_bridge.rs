@@ -46,10 +46,12 @@ impl ToolDispatcher for OrchestratorDispatcher {
     }
 }
 
-/// Build a `ToolRegistry` pre-populated with the Phase 1 v0 tool set.
+/// Build a `ToolRegistry` pre-populated with the Phase 1 v0 tools plus the Phase 2
+/// `ingest_source` tool.
 #[must_use]
 pub fn default_registry() -> ToolRegistry {
     use crate::tools::fs::{ListDir, ReadFile, WriteFile};
+    use crate::tools::ingest::IngestSource;
     use crate::tools::projects::{CreateProject, ListProjects, ProjectStatus};
     use crate::tools::run_command::RunCommand;
 
@@ -61,5 +63,6 @@ pub fn default_registry() -> ToolRegistry {
     r.register(Arc::new(ProjectStatus));
     r.register(Arc::new(CreateProject));
     r.register(Arc::new(ListProjects));
+    r.register(Arc::new(IngestSource));
     r
 }

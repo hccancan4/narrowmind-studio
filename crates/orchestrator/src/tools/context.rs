@@ -14,6 +14,7 @@ use serde::Serialize;
 use tokio::sync::{mpsc::UnboundedSender, Mutex};
 
 use crate::project::ProjectStore;
+use crate::worker::PythonRunner;
 
 /// Identifies which project a tool call belongs to. Cheap to clone.
 #[derive(Debug, Clone)]
@@ -56,6 +57,10 @@ pub struct ToolContext {
     pub project_store: Arc<ProjectStore>,
     /// Channel for streaming progress events.
     pub events: ToolEventSink,
+    /// Pre-built runner for spawning Python sidecar workers. Set at app startup
+    /// (`workspace_root` + HF cache env baked in). `None` only in unit tests for tools that
+    /// don't need a worker — fs and project tools never touch this field.
+    pub python_runner: Option<Arc<PythonRunner>>,
 }
 
 impl ToolContext {
@@ -69,7 +74,15 @@ impl ToolContext {
             selected,
             project_store,
             events,
+            python_runner: None,
         }
+    }
+
+    /// Attach a `PythonRunner` so worker-spawning tools (`ingest_source`, ...) can use it.
+    #[must_use]
+    pub fn with_python_runner(mut self, runner: Arc<PythonRunner>) -> Self {
+        self.python_runner = Some(runner);
+        self
     }
 
     /// Snapshot the currently-selected project at this exact moment.

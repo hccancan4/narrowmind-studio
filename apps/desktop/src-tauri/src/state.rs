@@ -1,15 +1,18 @@
-//! Shared Tauri state: project store, tool registry, selection, conversation history.
+//! Shared Tauri state: project store, tool registry, selection, conversation history,
+//! pre-built Python runner.
 //!
-//! `AgentSession` itself is *not* stored: we rebuild it per `agent.send_message` call from
-//! the saved conversation history, the shared selected-project lock, and the freshly-read
-//! provider key. The `selected_project` lock is wired into every tool's `ToolContext` so
-//! `create_project` can auto-select and the next tool in the same turn sees the change.
+//! `AgentSession` is rebuilt per `agent.send_message` call from the saved conversation
+//! history + the shared selected-project lock + the freshly-read provider key. The
+//! `python_runner` is built once at startup with `workspace_root` and HF cache env baked in,
+//! and cloned into every `ToolContext`.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use narrowmind_agent::Message;
 use narrowmind_orchestrator::{
-    default_registry, new_selected_project, ProjectStore, SelectedProject, ToolRegistry,
+    default_registry, hf_cache_env, new_selected_project, ProjectStore, PythonRunner,
+    SelectedProject, ToolRegistry,
 };
 use tokio::sync::Mutex;
 
@@ -19,21 +22,26 @@ pub const SYSTEM_PROMPT: &str = include_str!("system_prompt.md");
 pub struct AppState {
     pub project_store: Arc<ProjectStore>,
     pub tool_registry: Arc<ToolRegistry>,
-    /// The single source of truth for which project is "current". Cloned into every
-    /// `ToolContext`; rail clicks and `create_project` both write here.
     pub selected_project: SelectedProject,
-    /// Conversation history for the active agent session.
     pub conversation: Mutex<Vec<Message>>,
+    pub python_runner: Arc<PythonRunner>,
 }
 
 impl AppState {
-    pub fn new(project_store: Arc<ProjectStore>) -> Self {
+    pub fn new(project_store: Arc<ProjectStore>, workspace_root: PathBuf) -> Self {
         let registry = Arc::new(default_registry());
+        let mut runner = PythonRunner::uv_workspace(workspace_root);
+        if let Ok(env) = hf_cache_env() {
+            for (k, v) in env {
+                runner = runner.with_env(k, v);
+            }
+        }
         Self {
             project_store,
             tool_registry: registry,
             selected_project: new_selected_project(None),
             conversation: Mutex::new(Vec::new()),
+            python_runner: Arc::new(runner),
         }
     }
 }

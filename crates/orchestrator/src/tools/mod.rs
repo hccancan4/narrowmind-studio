@@ -7,6 +7,7 @@
 
 pub mod context;
 pub mod fs;
+pub mod ingest;
 pub mod projects;
 pub mod registry;
 pub mod run_command;
