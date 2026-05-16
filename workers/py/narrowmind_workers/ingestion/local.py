@@ -13,12 +13,15 @@ project in a half-ingested state.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-import uuid
 from pathlib import Path
 
+from narrowmind_workers.ingestion._common import (
+    fresh_doc_id,
+    fresh_source_id,
+    write_manifest_atomic,
+)
 from narrowmind_workers.ingestion.dispatch import handler_for, supported_extensions
 from narrowmind_workers.ingestion.models import Document, SourceManifest, SourceType
 
@@ -39,7 +42,7 @@ def ingest_local_path(
     if not target.exists():
         raise FileNotFoundError(f"ingest target does not exist: {target}")
 
-    source_id = source_id or _fresh_source_id(target)
+    source_id = source_id or fresh_source_id(target.name)
     source_type = SourceType.LOCAL_DIR if target.is_dir() else SourceType.LOCAL_FILE
 
     manifest = SourceManifest.new(
@@ -82,7 +85,7 @@ def ingest_local_path(
         os.replace(docs_tmp, docs_path)
 
     manifest.document_count = docs_written
-    _write_manifest_atomic(source_dir / "source.json", manifest)
+    write_manifest_atomic(source_dir / "source.json", manifest)
     return manifest
 
 
@@ -100,7 +103,7 @@ def _extract_one(file_path: Path, project_root: Path) -> Document:
     except ValueError:
         source_path = str(file_path)
     return Document(
-        doc_id=_fresh_doc_id(file_path),
+        doc_id=fresh_doc_id(file_path.stem),
         title=title,
         text=text,
         source_path=source_path,
@@ -121,25 +124,3 @@ def _iter_target_files(target: Path) -> list[Path]:
     return files
 
 
-def _fresh_source_id(target: Path) -> str:
-    return f"{_slugify(target.name)[:24]}-{uuid.uuid4().hex[:6]}"
-
-
-def _fresh_doc_id(file_path: Path) -> str:
-    return f"{_slugify(file_path.stem)[:24]}-{uuid.uuid4().hex[:6]}"
-
-
-def _slugify(s: str) -> str:
-    out = []
-    for c in s.lower():
-        if c.isalnum():
-            out.append(c)
-        elif c in (" ", "-", "_", "."):
-            out.append("-")
-    return "".join(out).strip("-") or "x"
-
-
-def _write_manifest_atomic(path: Path, manifest: SourceManifest) -> None:
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, path)

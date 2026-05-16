@@ -31,6 +31,47 @@ enum IngestArgs {
         #[serde(default)]
         source_id: Option<String>,
     },
+    /// Walk a Wikipedia category up to `max_depth` sub-categories, capped at `max_pages`.
+    Wikipedia {
+        /// Category name without the `Category:` prefix.
+        category: String,
+        #[serde(default = "default_language")]
+        language: String,
+        #[serde(default = "default_wikipedia_max_depth")]
+        max_depth: u32,
+        #[serde(default = "default_wikipedia_max_pages")]
+        max_pages: u32,
+        #[serde(default)]
+        source_id: Option<String>,
+    },
+    /// Fetch one URL or BFS-crawl from a seed URL.
+    Url {
+        url: String,
+        #[serde(default)]
+        max_depth: u32,
+        #[serde(default = "default_url_max_pages")]
+        max_pages: u32,
+        #[serde(default = "default_true")]
+        same_domain_only: bool,
+        #[serde(default)]
+        source_id: Option<String>,
+    },
+}
+
+fn default_language() -> String {
+    "en".into()
+}
+fn default_wikipedia_max_depth() -> u32 {
+    1
+}
+fn default_wikipedia_max_pages() -> u32 {
+    50
+}
+fn default_url_max_pages() -> u32 {
+    1
+}
+fn default_true() -> bool {
+    true
 }
 
 pub struct IngestSource;
@@ -48,16 +89,40 @@ impl Tool for IngestSource {
                 .into(),
             input_schema: json!({
                 "type": "object",
+                "description": "Tagged union; `type` selects the source kind.",
                 "oneOf": [
                     {
                         "title": "local",
-                        "type": "object",
                         "properties": {
                             "type": { "const": "local" },
                             "path": { "type": "string", "description": "Absolute path to a file or directory." },
                             "source_id": { "type": "string", "description": "Optional fixed source id." }
                         },
                         "required": ["type", "path"]
+                    },
+                    {
+                        "title": "wikipedia",
+                        "properties": {
+                            "type": { "const": "wikipedia" },
+                            "category": { "type": "string", "description": "Category name without the 'Category:' prefix." },
+                            "language": { "type": "string", "default": "en" },
+                            "max_depth": { "type": "integer", "minimum": 0, "maximum": 5, "default": 1 },
+                            "max_pages": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 50 },
+                            "source_id": { "type": "string" }
+                        },
+                        "required": ["type", "category"]
+                    },
+                    {
+                        "title": "url",
+                        "properties": {
+                            "type": { "const": "url" },
+                            "url": { "type": "string", "description": "Absolute http(s) URL." },
+                            "max_depth": { "type": "integer", "minimum": 0, "maximum": 3, "default": 0 },
+                            "max_pages": { "type": "integer", "minimum": 1, "maximum": 200, "default": 1 },
+                            "same_domain_only": { "type": "boolean", "default": true },
+                            "source_id": { "type": "string" }
+                        },
+                        "required": ["type", "url"]
                     }
                 ]
             }),
@@ -79,26 +144,62 @@ impl Tool for IngestSource {
             })?
             .clone();
 
-        match args {
-            IngestArgs::Local { path, source_id } => {
-                let params = json!({
+        let (method, params) = match args {
+            IngestArgs::Local { path, source_id } => (
+                "ingestion.local_path",
+                json!({
                     "project_root": project.root,
                     "target": path,
                     "source_id": source_id,
-                });
-                let cmd = WorkerCommand {
-                    module: "narrowmind_workers.ingestion".into(),
-                    method: "ingestion.local_path".into(),
-                    params,
-                    timeout: Some(Duration::from_secs(INGEST_TIMEOUT_SECS)),
-                };
-                let value = call_worker(&runner, &cmd).await.map_err(|e| ToolError::Exec {
-                    tool: "ingest_source".into(),
-                    message: e.to_string(),
-                })?;
-                Ok(format_outcome(&value))
-            }
-        }
+                }),
+            ),
+            IngestArgs::Wikipedia {
+                category,
+                language,
+                max_depth,
+                max_pages,
+                source_id,
+            } => (
+                "ingestion.wikipedia",
+                json!({
+                    "project_root": project.root,
+                    "category": category,
+                    "language": language,
+                    "max_depth": max_depth,
+                    "max_pages": max_pages,
+                    "source_id": source_id,
+                }),
+            ),
+            IngestArgs::Url {
+                url,
+                max_depth,
+                max_pages,
+                same_domain_only,
+                source_id,
+            } => (
+                "ingestion.url",
+                json!({
+                    "project_root": project.root,
+                    "url": url,
+                    "max_depth": max_depth,
+                    "max_pages": max_pages,
+                    "same_domain_only": same_domain_only,
+                    "source_id": source_id,
+                }),
+            ),
+        };
+
+        let cmd = WorkerCommand {
+            module: "narrowmind_workers.ingestion".into(),
+            method: method.into(),
+            params,
+            timeout: Some(Duration::from_secs(INGEST_TIMEOUT_SECS)),
+        };
+        let value = call_worker(&runner, &cmd).await.map_err(|e| ToolError::Exec {
+            tool: "ingest_source".into(),
+            message: e.to_string(),
+        })?;
+        Ok(format_outcome(&value))
     }
 }
 
