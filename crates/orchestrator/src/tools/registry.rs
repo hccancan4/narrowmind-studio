@@ -15,14 +15,10 @@ use tracing::{debug, warn};
 use super::context::ToolContext;
 use crate::project::ProjectError;
 
-/// Description of a tool surfaced to the LLM. Mirrors `agent::ToolDef` so the orchestrator
-/// can collect defs and hand them to a provider without translation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolDef {
-    pub name: String,
-    pub description: String,
-    pub input_schema: Value,
-}
+// Tool schema lives in the agent crate so providers, dispatchers, and orchestrator tools
+// all agree on a single source of truth. Re-export here so callers can keep importing
+// from `narrowmind_orchestrator::tools::ToolDef`.
+pub use narrowmind_agent::ToolDef;
 
 /// Successful tool output. `content` is the human-readable string the model will see in the
 /// `tool_result` block; `structured` is JSON the UI / orchestrator may use for richer rendering,

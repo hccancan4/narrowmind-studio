@@ -8,13 +8,17 @@
 //! so that swapping providers is a config change rather than a refactor.
 
 pub mod anthropic;
+pub mod dispatcher;
 pub mod error;
 pub mod provider;
+pub mod session;
 pub mod types;
 
 pub use anthropic::AnthropicProvider;
+pub use dispatcher::{ToolDispatchOutcome, ToolDispatcher};
 pub use error::{ProviderError, ProviderResult};
 pub use provider::Provider;
+pub use session::{AgentError, AgentEvent, AgentSession, MAX_TURN_ITERATIONS};
 pub use types::{Message, MessageContent, ProviderEvent, Role, StopReason, ToolDef};
 
 /// Crate version string for build-info reporting.

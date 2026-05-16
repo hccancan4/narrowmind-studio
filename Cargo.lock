@@ -1960,6 +1960,7 @@ dependencies = [
  "chrono",
  "dirs 5.0.1",
  "keyring",
+ "narrowmind-agent",
  "serde",
  "serde_json",
  "tempfile",
