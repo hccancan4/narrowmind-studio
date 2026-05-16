@@ -1,11 +1,21 @@
-//! Tauri v2 shell. Hosts the Phase 0 debug command that round-trips a `hello` call through the
-//! Rust orchestrator into a Python worker subprocess.
+//! Tauri v2 shell. Hosts the Phase 1 agent loop, project store, secrets, and tools.
+//!
+//! The desktop crate is intentionally thin: every command in [`commands`] either reads
+//! `AppState` and routes to the orchestrator, or wires an event channel from the agent /
+//! tool layer to a Tauri event the front-end subscribes to.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use narrowmind_orchestrator::{hello_round_trip, HelloResult, PythonRunner};
+use narrowmind_orchestrator::{hello_round_trip, HelloResult, ProjectStore, PythonRunner};
 use serde::Serialize;
 use tracing::{error, info};
+
+mod commands;
+mod state;
+mod system_prompt {} // anchored module just so the include_str! path resolves cleanly
+
+use crate::state::AppState;
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "snake_case")]
@@ -29,7 +39,6 @@ impl From<HelloResult> for HelloPayload {
     }
 }
 
-/// Invoked from the React UI's "Run hello round-trip" button.
 #[tauri::command]
 async fn hello_round_trip_cmd(name: Option<String>) -> Result<HelloPayload, String> {
     let root = workspace_root().ok_or_else(|| {
@@ -46,7 +55,6 @@ async fn hello_round_trip_cmd(name: Option<String>) -> Result<HelloPayload, Stri
     }
 }
 
-/// Reports the orchestrator crate version so the UI can show build info.
 #[tauri::command]
 fn orchestrator_version() -> &'static str {
     narrowmind_orchestrator::version()
@@ -63,8 +71,9 @@ use std::path::Path;
 /// Build and run the Tauri application. Returns only on shutdown.
 ///
 /// # Panics
-/// Panics if Tauri's runtime cannot be constructed (missing webview, OS-level failure). At that
-/// point there is no usable UI to surface the error through, so terminating is the only option.
+/// Panics if Tauri's runtime cannot be constructed (missing webview, OS-level failure) or if
+/// the OS data directory cannot be located. At that point there is no usable UI to surface
+/// the error through, so terminating is the only option.
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -74,10 +83,31 @@ pub fn run() {
         .with_target(true)
         .init();
 
+    let store_root = ProjectStore::default_root()
+        .expect("could not determine default project root for this OS");
+    let project_store = Arc::new(ProjectStore::new(store_root));
+    let app_state = AppState::new(project_store);
+
     tauri::Builder::default()
+        .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             hello_round_trip_cmd,
-            orchestrator_version
+            orchestrator_version,
+            // settings
+            commands::settings::set_provider_key,
+            commands::settings::has_provider_key,
+            commands::settings::delete_provider_key,
+            // projects
+            commands::projects::list_projects,
+            commands::projects::create_project,
+            commands::projects::delete_project,
+            commands::projects::select_project,
+            commands::projects::current_project,
+            commands::projects::project_status,
+            // agent
+            commands::agent::agent_send_message,
+            commands::agent::agent_reset,
+            commands::agent::agent_turn_count,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -76,11 +76,22 @@ impl AgentSession {
         system_prompt: Option<String>,
         events: UnboundedSender<AgentEvent>,
     ) -> Self {
+        Self::with_messages(provider, dispatcher, system_prompt, events, Vec::new())
+    }
+
+    /// Resume a conversation with an existing message history.
+    pub fn with_messages(
+        provider: Arc<dyn Provider>,
+        dispatcher: Arc<dyn ToolDispatcher>,
+        system_prompt: Option<String>,
+        events: UnboundedSender<AgentEvent>,
+        messages: Vec<Message>,
+    ) -> Self {
         Self {
             provider,
             dispatcher,
             system_prompt,
-            messages: Vec::new(),
+            messages,
             events,
         }
     }

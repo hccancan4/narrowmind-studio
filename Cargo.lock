@@ -1942,6 +1942,7 @@ dependencies = [
 name = "narrowmind-desktop"
 version = "0.0.0"
 dependencies = [
+ "narrowmind-agent",
  "narrowmind-orchestrator",
  "serde",
  "serde_json",
