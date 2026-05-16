@@ -506,7 +506,10 @@ fn resolve_seed(
     if let Some(SynthConfig { split_seed }) = cfg.synth {
         return Ok(split_seed);
     }
-    let s = rand::thread_rng().next_u64();
+    // TOML serialisation rejects u64 values above i64::MAX (the spec only mandates i64).
+    // Mask the top bit when generating a fresh seed — loses 1 bit of entropy, irrelevant
+    // for split reproducibility, keeps the on-disk value safe to round-trip.
+    let s = rand::thread_rng().next_u64() & (u64::MAX >> 1);
     cfg.synth = Some(SynthConfig { split_seed: s });
     ctx.project_store.update(&cfg).map_err(ToolError::Project)?;
     Ok(s)
