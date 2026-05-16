@@ -4,6 +4,7 @@
 //! Phase 0 ships only the `hello` round-trip; richer surface lands in later phases.
 
 pub mod agent_bridge;
+pub mod app_paths;
 pub mod error;
 pub mod hello;
 pub mod project;
@@ -12,6 +13,7 @@ pub mod tools;
 pub mod worker;
 
 pub use agent_bridge::{default_registry, OrchestratorDispatcher};
+pub use app_paths::{app_data_root, hf_cache_dir, hf_cache_env, AppPathError};
 pub use error::WorkerError;
 pub use hello::{hello_round_trip, HelloResult};
 pub use project::{

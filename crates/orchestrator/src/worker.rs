@@ -5,6 +5,7 @@
 //! pipelining, and progress notifications land in later phases — keeping the surface tiny now lets
 //! us replace it without churning callers.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -34,6 +35,10 @@ pub struct PythonRunner {
     /// Working directory the program is launched in. uv resolves the venv from cwd, so this must
     /// point at the workspace root containing `pyproject.toml`.
     pub cwd: PathBuf,
+    /// Environment variables to set on the spawned process. Merged with inherited env; if a key
+    /// here already exists in the parent env, this value wins. Used by the orchestrator to point
+    /// `HF_HOME` at the studio's own cache directory instead of `~/.cache/huggingface`.
+    pub envs: BTreeMap<String, String>,
 }
 
 impl PythonRunner {
@@ -44,7 +49,15 @@ impl PythonRunner {
             program: "uv".to_string(),
             leading_args: vec!["run".into(), "python".into()],
             cwd: workspace_root.into(),
+            envs: BTreeMap::new(),
         }
+    }
+
+    /// Builder: add or override one environment variable on the spawned process.
+    #[must_use]
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.envs.insert(key.into(), value.into());
+        self
     }
 }
 
@@ -199,6 +212,11 @@ fn build_command(runner: &PythonRunner, module: &str) -> Command {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    // Apply explicit env overrides last so they win over inherited values. Used by Phase 2
+    // ingestion to point HF_HOME / HF_HUB_CACHE / TRANSFORMERS_CACHE at the studio's cache.
+    for (k, v) in &runner.envs {
+        cmd.env(k, v);
+    }
     cmd
 }
 

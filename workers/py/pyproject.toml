@@ -6,7 +6,22 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Hasancan", email = "hasanhccan@gmail.com" }]
-dependencies = []
+dependencies = [
+    # Ingestion (Phase 2)
+    "pymupdf>=1.24",         # PDF text extraction
+    "ebooklib>=0.18",        # EPUB extraction
+    "python-docx>=1.1",      # DOCX extraction
+    "trafilatura>=1.12",     # web boilerplate removal + extraction
+    "wikipedia-api>=0.7",    # Wikipedia category scrape
+    "datasets>=3.0",         # HuggingFace datasets (streaming default)
+    "beautifulsoup4>=4.12",  # HTML helper for fixtures and fallback parsing
+    # Cleaning (Phase 2)
+    "datasketch>=1.6",          # MinHash near-duplicate detection
+    "lingua-language-detector>=2.0",  # pure-python language identification
+    # Chunking (Phase 2)
+    "pysbd>=0.3",            # sentence boundary detection
+    "tokenizers>=0.20",      # rust-backed XLM-RoBERTa tokenizer, no torch needed
+]
 
 [build-system]
 requires = ["hatchling"]
