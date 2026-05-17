@@ -35,6 +35,17 @@ def open_db(project_root: Path):
     return lancedb.connect(str(store_path(project_root)))
 
 
+def _table_exists(db, name: str) -> bool:
+    """Compatibility shim for lancedb 0.30+ where ``list_tables()`` returns a
+    ``ListTablesResponse`` dataclass instead of a bare ``list[str]``. The old
+    ``name in db.list_tables()`` idiom silently evaluates to ``False`` against the
+    dataclass — which is exactly the bug that made every upsert fall through to
+    ``create_table`` and lose its rows. Always go through this helper."""
+    result = db.list_tables()
+    names = getattr(result, "tables", result)  # list[str] on old lancedb, attr on new
+    return name in names
+
+
 def _schema() -> pa.Schema:
     return pa.schema(
         [
@@ -73,7 +84,7 @@ def upsert_chunks(project_root: Path, records: list[dict[str, Any]]) -> int:
         return 0
     db = open_db(project_root)
 
-    if TABLE_NAME in db.list_tables():
+    if _table_exists(db, TABLE_NAME):
         table = db.open_table(TABLE_NAME)
         # Delete existing rows we're about to re-insert. LanceDB has no native upsert
         # so this two-step is the canonical pattern.
@@ -94,7 +105,7 @@ def upsert_chunks(project_root: Path, records: list[dict[str, Any]]) -> int:
 def count_rows(project_root: Path) -> int:
     """Total chunks in the index. 0 if the table doesn't exist yet."""
     db = open_db(project_root)
-    if TABLE_NAME not in db.list_tables():
+    if not _table_exists(db, TABLE_NAME):
         return 0
     return db.open_table(TABLE_NAME).count_rows()
 
@@ -111,7 +122,7 @@ def query(
     out of the box.
     """
     db = open_db(project_root)
-    if TABLE_NAME not in db.list_tables():
+    if not _table_exists(db, TABLE_NAME):
         return []
     table = db.open_table(TABLE_NAME)
     q = table.search(query_vector).limit(top_k)

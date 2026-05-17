@@ -43,6 +43,13 @@ pub struct ModelSpec {
 
 impl ModelSpec {
     /// Phase 3 default model.
+    ///
+    /// `n_gpu_layers = -1` offloads every layer to the GPU. The Windows install pulls the
+    /// CUDA-enabled cu125 llama-cpp-python wheel from abetlen's GitHub releases (see
+    /// `workers/py/pyproject.toml`) which requires CUDA Toolkit 12.5 system-wide; the
+    /// `.nm-env.ps1` bootstrap prepends `CUDA\v12.5\bin` so cudart64_12.dll loads. On
+    /// Linux/macOS the source build of the wheel may be CPU-only — callers can override
+    /// via the `n_gpu_layers` arg on `start_inference_server` if CUDA isn't available.
     #[must_use]
     pub fn default_qwen2_5_7b_q4km() -> Self {
         Self {

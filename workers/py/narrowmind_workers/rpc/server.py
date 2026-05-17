@@ -154,11 +154,45 @@ def _error_response(request_id: Any, code: int, message: str) -> dict[str, Any]:
 
 
 def serve_stdio(registry: MethodRegistry) -> None:
-    """Convenience entry point: configure stderr logging and serve."""
+    """Convenience entry point: configure stderr logging and serve.
+
+    Hijack ``sys.stdout`` and redirect it to ``stderr`` so any third-party noise
+    (``tqdm`` progress bars from sentence-transformers / huggingface_hub, stray
+    ``print()`` calls in workers, library banners) cannot poison the JSON-RPC
+    frame stream. The captured real stdout is handed to ``JsonRpcServer`` as the
+    private protocol channel.
+
+    Discovered the hard way in Phase 3: sentence-transformers' "Loading weights"
+    bar printed control chars (carriage returns + binary) to fd 1 the first time
+    a worker called ``embed_one``, which made the Rust side see ``stream did not
+    contain valid UTF-8`` and tear the worker down. Belt-and-suspenders fix:
+    disable progress bars + redirect stdout, so future deps that don't honor the
+    env var can't reintroduce the bug.
+    """
+    import os
+
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
+
+    # CRITICAL on Windows: default sys.stdout/sys.stderr encoding follows the system
+    # locale (cp1252 on a Turkish/Western Windows install), not UTF-8. When the rag
+    # worker writes JSON with `ensure_ascii=False`, Unicode chunk text containing
+    # em dashes, smart quotes, accented characters, etc. gets encoded as cp1252 —
+    # which produces single-byte values like 0x97 that the Rust BufReader (strict
+    # UTF-8) chokes on with "stream did not contain valid UTF-8". This wasted ~an
+    # hour in Phase 3 acceptance because the broken byte was past the first 400
+    # bytes that early hex dumps showed. Always reconfigure to UTF-8 before serving.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="strict")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+    proto_stdout = sys.stdout
+    sys.stdout = sys.stderr  # any leak now lands in our log file, not the RPC stream
 
     logging.basicConfig(
         stream=sys.stderr,
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    JsonRpcServer(registry).serve_forever()
+    JsonRpcServer(registry, stdout=proto_stdout).serve_forever()
