@@ -72,6 +72,48 @@ PowerShell does not re-read PATH from the registry mid-session, so `winget insta
 
 ---
 
+## CUDA Toolkit for GPU inference (Phase 3)
+
+Phase 3 adds a local llama.cpp inference server via `llama-cpp-python`. On Windows the install pulls a **cu125 prebuilt wheel** directly from abetlen's GitHub releases (pinned in `workers/py/pyproject.toml`) because abetlen does not publish cu125 to a PEP503 index. The wheel's `llama.dll` dynamically links `cudart64_12.dll` + `cublas64_12.dll`, so **CUDA Toolkit 12.5 must be installed system-wide** for inference to work.
+
+### Why 12.5 specifically
+
+The reference machine had **CUDA Toolkit 13.2** already installed, but the abetlen prebuilt is compiled against the 12.x runtime ABI — loading `llama.dll` against 13.x DLLs fails with `cudart64_12.dll could not be found`. Two options:
+
+- **Side-by-side install of 12.5** (what this machine does): download from <https://developer.nvidia.com/cuda-12-5-1-download-archive>. The installer is happy to coexist with 13.2 and uses a separate `v12.5\` directory.
+- **Build the wheel from source against 13.x**: skip the prebuilt URL in `pyproject.toml` and let `uv` build from PyPI. Requires the full CUDA Toolkit + a matching MSVC toolchain — usually slower and more error-prone than the side-by-side approach.
+
+### `.nm-env.ps1` prepends `CUDA\v12.5\bin`
+
+Parent processes that started before the CUDA Toolkit install (e.g. the IDE host) carry a stale `PATH` and cannot find `cudart64_12.dll` even though it's on the registry-level system PATH. The env helper hardcodes the prepend so every dot-source is self-sufficient:
+
+```powershell
+$env:Path = "...;${env:ProgramFiles}\NVIDIA GPU Computing Toolkit\CUDA\v12.5\bin;..."
+```
+
+### Verifying GPU offload
+
+After dot-sourcing, this should print `True` and list the GPU:
+
+```powershell
+. .\.nm-env.ps1
+uv --directory workers/py run python -c "from llama_cpp import llama_supports_gpu_offload; print(llama_supports_gpu_offload())"
+# expected: ggml_cuda_init: found 1 CUDA devices ... NVIDIA GeForce RTX 3070
+# True
+```
+
+In the orchestrator log during a real inference run, `load_tensors: layer N assigned to device CUDA0` for every layer confirms full offload. If you see `assigned to device CPU` for all 28 layers, the wheel is the CPU fallback — re-check the install order.
+
+---
+
+## Worker stdio is strict UTF-8
+
+The Python workers communicate with the Rust orchestrator over JSON-RPC on stdin/stdout. **Windows defaults `sys.stdout` encoding to the system locale (cp1252)**, not UTF-8. Wikipedia chunks contain em dashes, smart quotes, and accented letters; writing them with `json.dumps(ensure_ascii=False)` against a cp1252 stream produces single-byte values like `0x97` that the Rust `BufReader::read_line` rejects as `stream did not contain valid UTF-8`.
+
+`narrowmind_workers.rpc.serve_stdio` reconfigures stdout/stderr to UTF-8 before serving and also redirects `sys.stdout` to `sys.stderr` so third-party noise (sentence-transformers' `Loading weights:` progress bar, stray `print()` calls) cannot poison the protocol stream. **Any new worker that calls `serve_stdio` inherits this for free.** Workers that need a custom serve loop must replicate the encoding setup or the next chunk with non-ASCII text will break the call.
+
+---
+
 ## Kaspersky and the Claude Code sandbox
 
 On the reference machine **Kaspersky Anti-Virus has blocked process spawning** by `powershell.exe` and `bash.exe` mid-session during heavy install activity. Symptom: every tool call returns `EPERM: operation not permitted, uv_spawn ...` with no other context. Disabling Kaspersky (or whitelisting the relevant executables) restores normal operation. This is environmental; nothing in the repo can fix it.

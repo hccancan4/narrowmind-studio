@@ -27,31 +27,33 @@ dependencies = [
     "sentence-transformers>=3.0",  # BGE-small embedder, lazy-loaded on first build_dataset
     "lancedb>=0.13",               # embedded vector store, file-backed (no service)
     "pyarrow>=17.0",               # lancedb dep; pinned so resolver doesn't pick incompatible
-    # Phase 3 — inference (llama.cpp HTTP server)
-    "llama-cpp-python[server]>=0.3",  # CUDA wheel via [tool.uv.sources] below
+    # Phase 3 — inference. llama-cpp-python CUDA 12.5 prebuilt from abetlen's GitHub
+    # release attachment (requires system-wide CUDA Toolkit 12.5 — README/dev-setup.md
+    # flags this prereq). Pinned to a direct URL because abetlen ships cu125 only as
+    # release assets, not via a PEP503 index. Linux + macOS dev defers to source build
+    # from PyPI (slow but works).
+    "llama-cpp-python[server] @ https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.23-cu125/llama_cpp_python-0.3.23-py3-none-win_amd64.whl ; sys_platform == 'win32'",
+    "llama-cpp-python[server]>=0.3 ; sys_platform != 'win32'",
 ]
 
 # Force a CPU-only torch wheel so the default ~2 GB CUDA wheel doesn't bloat the install
-# (BGE-small runs fine on CPU). llama-cpp-python pulls from the CUDA 12.4 wheel index so we
-# get GPU inference on RTX 3070 out of the box — falls back to CPU at runtime when CUDA
-# isn't available.
+# (BGE-small runs fine on CPU).
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
-llama-cpp-python = { index = "llama-cuda" }
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
-[[tool.uv.index]]
-name = "llama-cuda"
-url = "https://abetlen.github.io/llama-cpp-python/whl/cu124"
-explicit = true
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+# Required so the direct-URL dependency for the Windows cu125 llama-cpp-python wheel
+# (a GitHub release asset, not a PyPI package) is accepted by the build backend.
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["narrowmind_workers"]
