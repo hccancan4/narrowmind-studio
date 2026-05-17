@@ -212,21 +212,20 @@ impl InferenceManager {
         last.elapsed() > ttl
     }
 
-    /// Background watchdog loop. Spawn once at app startup.
-    #[must_use]
-    pub fn spawn_ttl_watcher(self, ttl: Duration) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            // Check at ttl/6 cadence — coarse enough not to wake the OS too often,
-            // fine enough to bound the over-shoot.
-            let check_every = ttl.checked_div(6).unwrap_or(Duration::from_secs(60));
-            loop {
-                tokio::time::sleep(check_every).await;
-                if self.idle_past(ttl).await {
-                    info!(?ttl, "inference server idle past TTL; stopping");
-                    self.stop().await;
-                }
-            }
-        })
+    /// One-shot idle check, intended to be called from a caller-owned loop. Returns
+    /// `true` when the server existed *and* has been stopped on this tick.
+    ///
+    /// Spawning here is deliberately the caller's job: orchestrator stays decoupled
+    /// from any specific async runtime (Tauri uses its own `async_runtime` wrapper;
+    /// tests might use `tokio::test`). See `apps/desktop/src-tauri/src/lib.rs::run`
+    /// for the production wiring.
+    pub async fn check_idle_and_stop(&self, ttl: Duration) -> bool {
+        if self.idle_past(ttl).await {
+            info!(?ttl, "inference server idle past TTL; stopping");
+            self.stop().await;
+            return true;
+        }
+        false
     }
 }
 

@@ -93,17 +93,21 @@ pub fn run() {
     tauri::Builder::default()
         .manage(app_state)
         .setup(|app| {
-            // Tauri 2 brings up its tokio runtime before .setup() runs, so this is the
-            // earliest safe point to spawn long-lived async tasks. We do it here rather
-            // than inside AppState::new() (which runs in sync context and would panic
-            // with 'there is no reactor running').
+            // Spawn the inference idle watchdog using Tauri's async runtime (not
+            // tokio::spawn directly — the latter panics in .setup() because no tokio
+            // current-runtime is set there). Tauri's wrapper enqueues onto its managed
+            // tokio rt, where tokio::time::sleep / mpsc work as expected.
             use tauri::Manager as _;
             let state: tauri::State<'_, AppState> = app.state();
-            let _watchdog = state
-                .inference
-                .as_ref()
-                .clone()
-                .spawn_ttl_watcher(narrowmind_orchestrator::INFERENCE_IDLE_TTL);
+            let inference = state.inference.as_ref().clone();
+            let ttl = narrowmind_orchestrator::INFERENCE_IDLE_TTL;
+            tauri::async_runtime::spawn(async move {
+                let tick = ttl.checked_div(6).unwrap_or(std::time::Duration::from_secs(60));
+                loop {
+                    tokio::time::sleep(tick).await;
+                    inference.check_idle_and_stop(ttl).await;
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
