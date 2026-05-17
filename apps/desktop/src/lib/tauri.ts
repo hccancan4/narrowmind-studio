@@ -122,6 +122,14 @@ export type ChatHit = {
 
 export const chat = {
   context: () => invoke<ChatPreviewContext>("chat_preview_context"),
+  /**
+   * Zero-API entry: ensures the local Qwen inference server is running for the
+   * currently-selected project and returns the same context shape `context()`
+   * does. The "Local chat" banner button calls this so the floating window can
+   * open without first paying for a Sonnet turn just to fire the
+   * `open_chat_preview` agent tool. Throws if no project is selected.
+   */
+  bootstrap: () => invoke<ChatPreviewContext>("chat_preview_bootstrap"),
   send: (
     query: string,
     opts: { topK?: number; maxTokens?: number; temperature?: number } = {},

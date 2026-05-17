@@ -86,19 +86,30 @@ export function ChatPreview() {
   return (
     <div className="chat-preview">
       <header>
-        <div className="tag">chat preview</div>
-        <span>
-          project <strong>{ctx?.project ?? "(none)"}</strong>
-          {ctx?.endpoint && <span className="muted"> · {ctx.endpoint}</span>}
-        </span>
-        {ctx?.filename && <span className="muted small">{ctx.filename}</span>}
+        <span className="tag">chat preview</span>
+        <span className="project-name">{ctx?.project ?? "(no project)"}</span>
+        {ctx?.endpoint && (
+          <span className="endpoint" title={ctx.endpoint}>
+            {ctx.endpoint}
+          </span>
+        )}
+        {ctx?.filename && (
+          <span className="model" title={ctx.filename}>
+            {ctx.filename}
+          </span>
+        )}
       </header>
 
       <div ref={scrollerRef} className="chat-scroller">
         {messages.length === 0 && (
           <div className="chat-empty">
-            ask anything — answers stream from your local DSLM with citations from the
-            project's RAG index.
+            <div style={{ fontSize: "1.6rem", marginBottom: "0.5rem" }}>💬</div>
+            <div>
+              ask your local DSLM anything.<br />
+              <span style={{ opacity: 0.7 }}>
+                answers stream from Qwen with citations from this project's RAG index.
+              </span>
+            </div>
           </div>
         )}
         {messages.map((m, i) => (

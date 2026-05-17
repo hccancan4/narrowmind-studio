@@ -12,7 +12,7 @@ use std::sync::Arc;
 use narrowmind_orchestrator::tools::rag::{
     assemble_prompt, chat_completion_stream, retrieve, RetrievedChunk,
 };
-use narrowmind_orchestrator::ToolContext;
+use narrowmind_orchestrator::{ModelSpec, ToolContext};
 use serde_json::json;
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::mpsc;
@@ -101,6 +101,52 @@ pub async fn chat_preview_send(
             Err(e)
         }
     }
+}
+
+/// Zero-API bootstrap for the chat preview window. The "Local chat" banner button
+/// calls this so the user can start a purely-local conversation without first
+/// asking Sonnet to run the `open_chat_preview` agent tool — that detour costs
+/// one round-trip of Anthropic spend just to open a window that then talks only
+/// to the local Qwen.
+///
+/// Idempotent: if the inference server is already up for any project, we reuse
+/// it (one server per app per Phase 3 decision F). Otherwise we spin up the
+/// default Qwen2.5-7B GGUF using the same path the agent tool uses.
+///
+/// Returns the same shape as `chat_preview_context` so the front-end can route
+/// it straight into the WebviewWindow that loads `#/chat-preview`.
+#[tauri::command]
+pub async fn chat_preview_bootstrap(
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    // Reject early if no project is selected so the window doesn't open into an
+    // empty-context error state — the user wouldn't know what to do.
+    if state.selected_project.lock().await.is_none() {
+        return Err("select a project first".into());
+    }
+
+    let model = ModelSpec::default_qwen2_5_7b_q4km();
+    let endpoint = state
+        .inference
+        .ensure_running(state.python_runner.as_ref(), &model)
+        .await
+        .map_err(|e| format!("start inference server: {e}"))?;
+    state.inference.mark_used().await;
+
+    let status = state.inference.status().await;
+    let project = state
+        .selected_project
+        .lock()
+        .await
+        .as_ref()
+        .map(|s| s.name.clone());
+    Ok(json!({
+        "project": project,
+        "endpoint": endpoint,
+        "model": status.repo_id,
+        "filename": status.filename,
+        "running": status.running,
+    }))
 }
 
 /// Provides the chat preview window the same project + endpoint info the parent passed via

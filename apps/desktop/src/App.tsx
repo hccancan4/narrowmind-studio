@@ -7,13 +7,14 @@ import { RightSidebar } from "./components/RightSidebar";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { TerminalPane, type TerminalHandle } from "./components/TerminalPane";
 import { onToolEvent } from "./lib/events";
-import { agent, settings } from "./lib/tauri";
+import { agent, chat, settings } from "./lib/tauri";
 
 export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [hasKey, setHasKey] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
+  const [localChatBusy, setLocalChatBusy] = useState(false);
   const termRef = useRef<TerminalHandle | null>(null);
 
   const onTerminalReady = useCallback((handle: TerminalHandle) => {
@@ -69,6 +70,44 @@ export function App() {
     }
   }
 
+  /**
+   * Open the chat preview window directly, bypassing the agent loop.
+   * Everything from here on talks only to the local Qwen — no Anthropic spend.
+   * Idempotent: if the window already exists we just focus it; if the
+   * inference server is already up we reuse it. Bootstrap call ensures the
+   * window doesn't open into an empty-context "no endpoint" state.
+   */
+  async function handleOpenLocalChat() {
+    if (!selectedProject || localChatBusy) return;
+    setLocalChatBusy(true);
+    try {
+      await chat.bootstrap();
+    } catch (e) {
+      termRef.current?.writeError(`local chat: ${e}`);
+      setLocalChatBusy(false);
+      return;
+    }
+    const label = "chat-preview";
+    try {
+      const existing = await WebviewWindow.getByLabel(label);
+      if (existing) {
+        await existing.setFocus();
+      } else {
+        new WebviewWindow(label, {
+          url: "/#/chat-preview",
+          title: "NarrowMind chat preview",
+          width: 640,
+          height: 760,
+          resizable: true,
+        });
+      }
+    } catch (e) {
+      termRef.current?.writeError(`open chat window: ${e}`);
+    } finally {
+      setLocalChatBusy(false);
+    }
+  }
+
   const ready = Boolean(selectedProject) && hasKey === true;
   const placeholder = !hasKey
     ? "set your Anthropic API key in Settings first (⚙)"
@@ -94,6 +133,17 @@ export function App() {
             <span className="muted">no project selected</span>
           )}
           <span className="spacer" />
+          {selectedProject && (
+            <button
+              type="button"
+              className="banner-action"
+              disabled={localChatBusy}
+              onClick={handleOpenLocalChat}
+              title="Open the local Qwen chat window. Bypasses the agent loop — no Anthropic API spend."
+            >
+              {localChatBusy ? "starting…" : "💬 Local chat"}
+            </button>
+          )}
           {hasKey === false && (
             <button
               type="button"

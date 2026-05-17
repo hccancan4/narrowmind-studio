@@ -134,6 +134,7 @@ pub fn run() {
             // chat preview
             commands::chat::chat_preview_send,
             commands::chat::chat_preview_context,
+            commands::chat::chat_preview_bootstrap,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
