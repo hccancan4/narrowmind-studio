@@ -5,7 +5,11 @@ import { chunks, type ChunkRecord, type ListChunksResponse } from "../lib/tauri"
 
 type ShowFilter = "all" | "included" | "excluded";
 
-const ESTIMATED_ROW_HEIGHT = 96;
+// Initial guess only — actual row height is measured per row via
+// `virtualizer.measureElement` because the text preview wraps to a variable
+// number of lines depending on panel width. Using a fixed estimate caused
+// rows to overlap whenever the wrapped text exceeded the guess.
+const ESTIMATED_ROW_HEIGHT = 140;
 const PAGE_LIMIT = 500;
 
 export function DatasetBrowser() {
@@ -48,6 +52,14 @@ export function DatasetBrowser() {
     getScrollElement: () => parentRef.current,
     estimateSize: () => ESTIMATED_ROW_HEIGHT,
     overscan: 8,
+    // Measure every row's real height so wrapped text doesn't overlap the next
+    // row. Tanstack Virtual will call this with the row DOM node when it
+    // mounts (via the ref callback below) and use the bbox height instead of
+    // the estimate.
+    measureElement:
+      typeof ResizeObserver !== "undefined"
+        ? (element) => element.getBoundingClientRect().height
+        : undefined,
   });
 
   async function toggleInclude(c: ChunkRecord) {
@@ -106,6 +118,10 @@ export function DatasetBrowser() {
             return (
               <div
                 key={c.chunk_id}
+                // Both the ref AND data-index are required so the virtualizer
+                // can identify which row's height we're reporting.
+                ref={virtualizer.measureElement}
+                data-index={vrow.index}
                 className={`ds-row ${c.include ? "included" : "excluded"}`}
                 style={{
                   position: "absolute",
