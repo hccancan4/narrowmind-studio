@@ -22,7 +22,7 @@ use crate::types::{Message, MessageContent, ProviderEvent, Role, StopReason, Too
 
 /// Default model id. Picked to match `docs/ARCHITECTURE.md` "Default base models" plus the
 /// general-purpose Claude family used for the agent loop in Phase 1.
-pub const DEFAULT_MODEL: &str = "claude-opus-4-7";
+pub const DEFAULT_MODEL: &str = "claude-sonnet-4-6";
 
 /// Default base URL — overridable for tests / proxies.
 pub const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";

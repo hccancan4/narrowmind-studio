@@ -52,7 +52,7 @@ pub async fn create_project(
     };
     let provider = ProviderConfig {
         name: provider.unwrap_or_else(|| "anthropic".into()),
-        model: model.unwrap_or_else(|| "claude-opus-4-7".into()),
+        model: model.unwrap_or_else(|| "claude-sonnet-4-6".into()),
     };
     let cfg = state
         .project_store

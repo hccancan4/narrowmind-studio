@@ -104,7 +104,7 @@ impl Tool for CreateProject {
         let tier = parse_tier(args.tier.as_deref())?;
         let provider = ProviderConfig {
             name: args.provider.unwrap_or_else(|| "anthropic".into()),
-            model: args.model.unwrap_or_else(|| "claude-opus-4-7".into()),
+            model: args.model.unwrap_or_else(|| "claude-sonnet-4-6".into()),
         };
         let cfg = ctx.project_store.create(&args.name, tier, provider)?;
         let root = ctx.project_store.project_dir(&cfg.name);

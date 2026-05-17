@@ -267,7 +267,7 @@ mod tests {
     fn provider() -> ProviderConfig {
         ProviderConfig {
             name: "anthropic".into(),
-            model: "claude-opus-4-7".into(),
+            model: "claude-sonnet-4-6".into(),
         }
     }
 
@@ -350,7 +350,7 @@ base_model = ""
 
 [provider]
 name = "anthropic"
-model = "claude-opus-4-7"
+model = "claude-sonnet-4-6"
 "#,
         )
         .unwrap();

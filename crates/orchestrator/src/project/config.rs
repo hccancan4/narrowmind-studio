@@ -10,7 +10,7 @@
 //!
 //! [provider]
 //! name = "anthropic"
-//! model = "claude-opus-4-7"
+//! model = "claude-sonnet-4-6"
 //! ```
 //!
 //! `schema_version` is mandatory and validated on read; bumping it requires a migration step
