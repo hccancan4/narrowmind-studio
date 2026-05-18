@@ -91,6 +91,31 @@ The Nous Philosophy DSLM must be reachable via the Local Chat button — no agen
 
 **Acceptance**: User says *"Use Qwen2.5-7B and the dataset I just built. Stand up RAG and answer: 'What is the hard problem of consciousness?'"*. A reasoned answer streams with citations to retrieved chunks. Eval produces a report with recall@5 and judge scores.
 
+### Phase 3.5 follow-up — Retrieval Polish (1–2 days)
+
+Run between Phase 3 and Phase 4 once the 19-pair acceptance eval showed
+the dense-only retriever missing too many proper-noun-heavy questions
+(recall 0.79, judge 3.37 — both below the bar to start fine-tuning on
+the dataset). Not a numbered phase; the deliverables ride on top of
+Phase 3's vector store and Phase 3's tooling shape.
+
+**Scope**:
+- BM25 sparse retriever (LanceDB FTS) alongside the existing dense
+  index, fused with Reciprocal Rank Fusion (k=60, Cormack/Clarke 2009)
+- `[rag]` section in `project.toml` (`retrieval_mode`, `top_k`,
+  `hybrid_k_dense`, `hybrid_k_sparse`, `rrf_k`) with hybrid as default
+- `mode` arg threaded through `query_index` / `rag_chat` / `run_eval`
+  agent tools for one-prompt A/B sweeps
+- Eval-set expansion: re-split sft+eval at 75/25 (140 + 46) and
+  generate 10 proper-noun-targeted pairs via cheap-model synth, for a
+  total 56-pair eval
+
+**Acceptance**: hybrid retrieval reaches recall@5 ≥ 0.85 AND judge
+mean ≥ 3.8 on the expanded eval set. On the dogfood project
+(2026-05-18): recall **0.98** / judge **4.55**, zero catastrophic
+(score≤2) failures. Multi-config comparison archived at
+`evals/2026-05-18-multiconfig.md`.
+
 ---
 
 ## Phase 4 — Fine-Tuning Path (~1–2 weeks)

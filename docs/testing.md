@@ -7,17 +7,27 @@ file is current.
 
 ---
 
-## Current baseline (2026-05-17, post Phase 3 + UI polish + synth_provider override)
+## Current baseline (2026-05-18, post Phase 3.5 retrieval polish)
 
 | Runtime | Command | Result |
 |---|---|---|
-| **Rust unit** | `cargo test --workspace --lib` | **58 passed** (0 failed) — 8 in `narrowmind-agent`, 0 in `narrowmind-workers`, 50 in `narrowmind-orchestrator` |
+| **Rust unit** | `cargo test --workspace --lib` | **62 passed** (0 failed) — 8 in `narrowmind-agent`, 0 in `narrowmind-workers`, 54 in `narrowmind-orchestrator` (+4 `RagConfig` / `RetrievalMode` back-compat tests) |
 | **Rust integration** | `cargo test --workspace --tests` | **+2 passed** in `crates/orchestrator/tests/` (hello round-trip) |
-| **Python** | `uv --directory workers/py run pytest` | **69 passed** (0 failed) |
+| **Python** | `uv --directory workers/py run pytest` | **77 passed** (0 failed) — +8 vs prior baseline for FTS, RRF math, hybrid query, FTS-without-index graceful degrade |
 | **TypeScript** | `pnpm -r typecheck` | **2 workspaces clean** (`apps/desktop`, `packages/sdk-js`) |
 
-Total: **129 tests** across three runtimes. Workspace clean, no warnings,
+Total: **141 tests** across three runtimes. Workspace clean, no warnings,
 no flakes.
+
+### Earlier baseline (2026-05-17, post Phase 3 + UI polish + synth_provider override)
+
+| Runtime | Command | Result |
+|---|---|---|
+| Rust unit | `cargo test --workspace --lib` | 58 passed (8 agent + 0 workers + 50 orchestrator) |
+| Rust integration | `cargo test --workspace --tests` | +2 passed |
+| Python | `uv ... pytest` | 69 passed |
+| TypeScript | `pnpm -r typecheck` | 2 workspaces clean |
+| Total | | 129 tests, 0 failed |
 
 ---
 
@@ -140,7 +150,34 @@ A short ledger of when the full 10-step smoke last ran cleanly. Each
 entry should link to the run_eval markdown report it produced, since
 that's the only step with non-binary output worth versioning.
 
-### 2026-05-18 — pre Phase 4 consolidation
+### 2026-05-18 (PM) — Phase 3.5 acceptance, multi-config retrieval
+
+Run on commit `3a9560b` (post Phase 3.5 hybrid retrieval + 56-pair eval).
+Build target: Tauri dev / debug, Windows 11, RTX 3070 + 32 GB RAM.
+
+Eval set: **56 pairs** on `deneme1-faz2` (46 reshuffled from sft+eval at
+seed `7340118592873561`, plus 10 proper-noun-targeted pairs generated
+via Haiku — exactly the failure class Phase 3 missed).
+
+Multi-config run via one agent prompt sweeping `mode ∈ {dense, sparse,
+hybrid}`. Aggregated comparison archived at
+`<project>/evals/2026-05-18-multiconfig.md`.
+
+| metric | dense | sparse | **hybrid** | Phase 3 baseline (19 pairs) |
+|---|---:|---:|---:|---:|
+| recall@5    | 0.89 | 0.98 | **0.98** | 0.79 |
+| judge mean  | 4.23 | 4.43 | **4.55** | 3.37 |
+| score=1     | 3 | 1 | **0** | 4 |
+
+Phase 4 gating thresholds (recall@5 ≥ 0.85 AND judge ≥ 3.8): **PASS**.
+Hybrid vs dense delta: 5 pairs flipped MISS→HIT (including all three
+proper-noun-rescue targets: C. D. Broad 1930, Frank Jackson 1982, Anne
+Conway/Leibniz), 0 pairs lost recall, 12 judge scores up, 4 down. Zero
+hybrid pairs scored at judge≤2.
+
+This is the run that unblocks Phase 4 (LoRA fine-tune).
+
+### 2026-05-17 — pre Phase 4 consolidation (superseded by the 3.5 run above)
 
 Run on commit `2090cfb` (post Phase 3 + UI polish + synth_provider).
 Build target: Tauri dev / debug profile, Windows 11, RTX 3070 + 32 GB RAM.
