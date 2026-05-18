@@ -56,14 +56,24 @@ pub async fn chat_preview_send(
     .with_python_runner(state.python_runner.clone())
     .with_inference(state.inference.clone());
 
-    let hits: Vec<RetrievedChunk> =
-        retrieve(&ctx, &project.root, &query, top_k.unwrap_or(5), None)
-            .await
-            .map_err(|e| {
-                let msg = e.to_string();
-                let _ = app.emit(ERROR_EVENT, json!({ "stage": "retrieve", "error": &msg }));
-                msg
-            })?;
+    // Local Chat reads the project's persisted retrieval mode — same defaults
+    // the agent tools use. No per-call override here; if the user wants to A/B
+    // sparse vs hybrid they edit project.toml or use the agent's query_index tool.
+    let proj_cfg = state.project_store.get(&project.name).map_err(|e| e.to_string())?;
+    let hits: Vec<RetrievedChunk> = retrieve(
+        &ctx,
+        &project.root,
+        &query,
+        top_k.unwrap_or(5),
+        None,
+        &proj_cfg.rag,
+    )
+    .await
+    .map_err(|e| {
+        let msg = e.to_string();
+        let _ = app.emit(ERROR_EVENT, json!({ "stage": "retrieve", "error": &msg }));
+        msg
+    })?;
     let _ = app.emit(HITS_EVENT, &hits);
 
     let prompt = assemble_prompt(&hits, &query);

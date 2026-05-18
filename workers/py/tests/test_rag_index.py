@@ -11,9 +11,13 @@ import pytest
 from narrowmind_workers.rag.embedder import DIM
 from narrowmind_workers.rag.index import (
     TABLE_NAME,
+    build_fts_index,
     count_rows,
+    fts_query,
+    hybrid_query,
     open_db,
     query,
+    rrf_fuse,
     store_path,
     upsert_chunks,
 )
@@ -117,3 +121,144 @@ def test_query_tolerates_bad_metadata(tmp_path: Path, malformed_metadata) -> Non
     hits = query(tmp_path, _fake_vec(1), top_k=1)
     # Bad JSON → empty dict, not exception
     assert hits[0]["metadata"] == {}
+
+
+# ---------------------------------------------------------------------------
+# Phase 3.5 — FTS + RRF + hybrid retrieval
+# ---------------------------------------------------------------------------
+
+
+def test_fts_index_finds_proper_nouns(tmp_path: Path) -> None:
+    """The proper-noun case Phase 3 acceptance bug surfaced: BGE-small ranks
+    'Doleantie' too low to make top-5 dense, but BM25 surfaces it instantly."""
+    records = [
+        _fixture_record(
+            "ck_dol",
+            "src",
+            "The Doleantie was a breakaway movement led by Abraham Kuyper that left the Dutch state Hervormde Kerk.",
+            1,
+        ),
+        _fixture_record("ck_oth1", "src", "qualia are subjective experiences", 2),
+        _fixture_record(
+            "ck_oth2", "src", "free will and determinism in modern philosophy", 3
+        ),
+        _fixture_record("ck_oth3", "src", "the hard problem of consciousness", 4),
+    ]
+    upsert_chunks(tmp_path, records)
+    build_fts_index(tmp_path)
+
+    hits = fts_query(tmp_path, "Doleantie movement", top_k=3)
+    assert len(hits) >= 1
+    # Top hit must be the Doleantie chunk — BM25's whole point.
+    assert hits[0]["chunk_id"] == "ck_dol"
+    assert "_score" in hits[0]
+    assert hits[0]["_score"] > 0
+
+
+def test_fts_query_without_index_returns_empty(tmp_path: Path) -> None:
+    """If FTS index has never been built, fts_query must return [] rather than
+    raise. Dense-only fallback is the explicit design choice."""
+    records = [_fixture_record("ck1", "src", "no fts index built yet", 1)]
+    upsert_chunks(tmp_path, records)
+    # No build_fts_index call here.
+    assert fts_query(tmp_path, "anything", top_k=3) == []
+
+
+def test_fts_respects_source_filter(tmp_path: Path) -> None:
+    upsert_chunks(
+        tmp_path,
+        [
+            _fixture_record("a1", "srcA", "Doleantie movement detail", 1),
+            _fixture_record("b1", "srcB", "Doleantie movement different source", 2),
+        ],
+    )
+    build_fts_index(tmp_path)
+    hits = fts_query(tmp_path, "Doleantie", top_k=5, source_filter="srcA")
+    assert all(h["source_id"] == "srcA" for h in hits)
+    assert len(hits) == 1
+
+
+# --- RRF unit tests: deterministic inputs to make the fusion math auditable ---
+
+
+def test_rrf_fuses_two_rankings_with_canonical_score() -> None:
+    """Canonical Cormack/Clarke RRF: score(d) = sum_r 1/(k+rank).
+    With k=60:
+      - 'a' is rank 1 in both lists  → 1/61 + 1/61 = 2/61
+      - 'b' is rank 2 in dense only  → 1/62
+      - 'c' is rank 2 in sparse only → 1/62
+    'a' wins; 'b' and 'c' tie."""
+    dense = [
+        {"chunk_id": "a", "text": "alpha"},
+        {"chunk_id": "b", "text": "beta"},
+    ]
+    sparse = [
+        {"chunk_id": "a", "text": "alpha"},  # rank 1 in both → highest fused
+        {"chunk_id": "c", "text": "gamma"},
+    ]
+    fused = rrf_fuse([dense, sparse], top_k=3, rrf_k=60)
+    # 'a' must come first; b/c ordering is arbitrary since they tie at 1/62.
+    assert fused[0]["chunk_id"] == "a"
+    assert {fused[1]["chunk_id"], fused[2]["chunk_id"]} == {"b", "c"}
+    a_score = next(r["_rrf_score"] for r in fused if r["chunk_id"] == "a")
+    b_score = next(r["_rrf_score"] for r in fused if r["chunk_id"] == "b")
+    c_score = next(r["_rrf_score"] for r in fused if r["chunk_id"] == "c")
+    assert a_score == pytest.approx(2.0 / 61, rel=1e-6)
+    assert b_score == pytest.approx(1.0 / 62, rel=1e-6)
+    assert c_score == pytest.approx(1.0 / 62, rel=1e-6)
+    assert a_score > b_score
+    assert a_score > c_score
+
+
+def test_rrf_marks_contributing_sources() -> None:
+    dense = [{"chunk_id": "a", "text": "x"}, {"chunk_id": "b", "text": "y"}]
+    sparse = [{"chunk_id": "a", "text": "x"}, {"chunk_id": "c", "text": "z"}]
+    fused = rrf_fuse([dense, sparse], top_k=3)
+    by_id = {r["chunk_id"]: r for r in fused}
+    assert set(by_id["a"]["_rrf_sources"]) == {"r0", "r1"}
+    assert by_id["b"]["_rrf_sources"] == ["r0"]
+    assert by_id["c"]["_rrf_sources"] == ["r1"]
+
+
+def test_rrf_handles_empty_inputs() -> None:
+    assert rrf_fuse([], top_k=5) == []
+    assert rrf_fuse([[], []], top_k=5) == []
+
+
+def test_rrf_handles_top_k_zero() -> None:
+    dense = [{"chunk_id": "a"}]
+    assert rrf_fuse([dense], top_k=0) == []
+
+
+def test_hybrid_query_combines_dense_and_sparse(tmp_path: Path) -> None:
+    """End-to-end hybrid: 'Doleantie' is a proper noun BGE-small struggles
+    with, but BM25 finds it instantly. Hybrid should rank it in top-3."""
+    records = [
+        _fixture_record(
+            "ck_dol", "src", "The Doleantie was led by Abraham Kuyper", 100
+        ),
+        _fixture_record("ck_qual", "src", "qualia are subjective experiences", 1),
+        _fixture_record("ck_det", "src", "free will and determinism", 2),
+        _fixture_record("ck_hard", "src", "hard problem of consciousness", 3),
+        _fixture_record("ck_mind", "src", "mind body dualism", 4),
+    ]
+    upsert_chunks(tmp_path, records)
+    build_fts_index(tmp_path)
+
+    # Use a vector dissimilar from Doleantie chunk so dense ranks it low.
+    qv = _fake_vec(3)
+    hybrid = hybrid_query(
+        tmp_path,
+        "Doleantie movement",
+        qv,
+        top_k=3,
+        k_dense=5,
+        k_sparse=5,
+    )
+    assert len(hybrid) >= 1
+    chunk_ids = [r["chunk_id"] for r in hybrid]
+    # FTS dominates for this proper-noun query, so ck_dol must be in top results.
+    assert "ck_dol" in chunk_ids
+    # RRF debug fields present
+    assert "_rrf_score" in hybrid[0]
+    assert "_rrf_sources" in hybrid[0]

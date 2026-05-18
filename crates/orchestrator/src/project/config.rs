@@ -45,6 +45,12 @@ pub struct ProjectConfig {
     /// Optional + back-compat: old project.toml files without this section still parse.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub synth: Option<SynthConfig>,
+    /// Retrieval-stack tuning (top_k, hybrid weights, RRF fusion constant).
+    /// Defaults are filled in by [`RagConfig::default`] when the field is missing
+    /// from older project.toml files — this is the back-compat path for projects
+    /// created before Phase 3.5 added hybrid retrieval.
+    #[serde(default)]
+    pub rag: RagConfig,
 }
 
 /// Recorded once per project on the first `generate_sft` run so subsequent runs reproduce
@@ -53,6 +59,87 @@ pub struct ProjectConfig {
 pub struct SynthConfig {
     /// Seed used to shuffle Q&A pairs before splitting into train + held-out eval.
     pub split_seed: u64,
+}
+
+/// Retrieval-stack config introduced in Phase 3.5. Lives in `project.toml` under
+/// `[rag]`; older configs that pre-date this section pick up the
+/// [`RagConfig::default`] values which match the post-3.5 production defaults.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RagConfig {
+    /// Which retriever the agent tools default to. `hybrid` (dense + BM25 + RRF)
+    /// is the post-3.5 default because it closes the proper-noun recall gap that
+    /// pure dense had. `dense` and `sparse` remain selectable for A/B testing.
+    #[serde(default = "RagConfig::default_mode")]
+    pub retrieval_mode: RetrievalMode,
+    /// Number of chunks returned to the caller.
+    #[serde(default = "RagConfig::default_top_k")]
+    pub top_k: u32,
+    /// Candidate pool size from the dense retriever before RRF fusion.
+    #[serde(default = "RagConfig::default_hybrid_k_dense")]
+    pub hybrid_k_dense: u32,
+    /// Candidate pool size from the sparse (BM25) retriever before RRF fusion.
+    #[serde(default = "RagConfig::default_hybrid_k_sparse")]
+    pub hybrid_k_sparse: u32,
+    /// Reciprocal Rank Fusion smoothing constant. 60 is canonical
+    /// (Cormack/Clarke 2009); don't change without re-running the eval set.
+    #[serde(default = "RagConfig::default_rrf_k")]
+    pub rrf_k: u32,
+}
+
+impl RagConfig {
+    fn default_mode() -> RetrievalMode {
+        RetrievalMode::Hybrid
+    }
+    fn default_top_k() -> u32 {
+        5
+    }
+    fn default_hybrid_k_dense() -> u32 {
+        10
+    }
+    fn default_hybrid_k_sparse() -> u32 {
+        10
+    }
+    fn default_rrf_k() -> u32 {
+        60
+    }
+}
+
+impl Default for RagConfig {
+    fn default() -> Self {
+        Self {
+            retrieval_mode: Self::default_mode(),
+            top_k: Self::default_top_k(),
+            hybrid_k_dense: Self::default_hybrid_k_dense(),
+            hybrid_k_sparse: Self::default_hybrid_k_sparse(),
+            rrf_k: Self::default_rrf_k(),
+        }
+    }
+}
+
+/// Retriever variant selected by `[rag] retrieval_mode` and by the
+/// `query_index` / `rag_chat` agent tool `mode` arg.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RetrievalMode {
+    /// BGE-small cosine similarity only. Phase 3 baseline.
+    Dense,
+    /// BM25 over the `text` column only. Strong for exact-term / proper-noun queries.
+    Sparse,
+    /// Reciprocal Rank Fusion across both retrievers. The post-3.5 default.
+    #[default]
+    Hybrid,
+}
+
+impl RetrievalMode {
+    /// Stable wire string used by JSON-RPC params + tool args.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Dense => "dense",
+            Self::Sparse => "sparse",
+            Self::Hybrid => "hybrid",
+        }
+    }
 }
 
 /// Lifecycle state of a project.
@@ -107,6 +194,7 @@ impl ProjectConfig {
             base_model: String::new(),
             provider,
             synth: None,
+            rag: RagConfig::default(),
         }
     }
 }
@@ -194,5 +282,76 @@ mod tests {
         let s = toml::to_string(&cfg).unwrap();
         let back: ProjectConfig = toml::from_str(&s).unwrap();
         assert_eq!(cfg, back);
+    }
+
+    #[test]
+    fn rag_defaults_match_phase_35_decision() {
+        let r = RagConfig::default();
+        assert!(matches!(r.retrieval_mode, RetrievalMode::Hybrid));
+        assert_eq!(r.top_k, 5);
+        assert_eq!(r.hybrid_k_dense, 10);
+        assert_eq!(r.hybrid_k_sparse, 10);
+        assert_eq!(r.rrf_k, 60);
+    }
+
+    #[test]
+    fn rag_section_missing_from_old_project_toml_uses_defaults() {
+        // Realistic Phase 3 project.toml — no [rag] section. Must still parse and
+        // fall back to hybrid defaults so existing projects don't break on upgrade.
+        let old_toml = r#"
+schema_version = 1
+name = "deneme1-faz2"
+created_at = "2026-05-16T22:46:56.266694300Z"
+status = "draft"
+tier = "rag"
+base_model = ""
+
+[provider]
+name = "anthropic"
+model = "claude-sonnet-4-6"
+
+[synth]
+split_seed = 5405776840459666338
+"#;
+        let cfg: ProjectConfig = toml::from_str(old_toml).expect("must parse pre-3.5 toml");
+        assert_eq!(cfg.name, "deneme1-faz2");
+        // Default-filled rag section
+        assert!(matches!(cfg.rag.retrieval_mode, RetrievalMode::Hybrid));
+        assert_eq!(cfg.rag.top_k, 5);
+        // Also: synth_model on provider defaults to empty (from earlier fix, regression check).
+        assert!(cfg.provider.synth_model.is_empty());
+    }
+
+    #[test]
+    fn rag_section_partial_override_keeps_other_defaults() {
+        // User edits one knob (e.g. swap to dense for A/B) — others stay default.
+        let partial = r#"
+schema_version = 1
+name = "x"
+created_at = "2026-05-16T22:46:56Z"
+status = "draft"
+tier = "rag"
+
+[provider]
+name = "anthropic"
+model = "m"
+
+[rag]
+retrieval_mode = "dense"
+"#;
+        let cfg: ProjectConfig = toml::from_str(partial).expect("partial rag section must parse");
+        assert!(matches!(cfg.rag.retrieval_mode, RetrievalMode::Dense));
+        assert_eq!(cfg.rag.top_k, 5);
+        assert_eq!(cfg.rag.hybrid_k_dense, 10);
+        assert_eq!(cfg.rag.rrf_k, 60);
+    }
+
+    #[test]
+    fn retrieval_mode_wire_strings_are_stable() {
+        // The JSON-RPC contract with workers/py depends on these strings.
+        // Renaming any of them is a breaking change.
+        assert_eq!(RetrievalMode::Dense.as_str(), "dense");
+        assert_eq!(RetrievalMode::Sparse.as_str(), "sparse");
+        assert_eq!(RetrievalMode::Hybrid.as_str(), "hybrid");
     }
 }

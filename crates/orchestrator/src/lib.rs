@@ -23,7 +23,7 @@ pub use inference::{
 };
 pub use project::{
     validate_name, ProjectConfig, ProjectError, ProjectStatus, ProjectStore, ProjectTier,
-    ProviderConfig, SynthConfig, SCHEMA_VERSION,
+    ProviderConfig, RagConfig, RetrievalMode, SynthConfig, SCHEMA_VERSION,
 };
 pub use secrets::{SecretError, SecretStore};
 pub use tools::{

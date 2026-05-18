@@ -25,6 +25,11 @@ const RAG_QUERY_TIMEOUT_SECS: u64 = 60;
 const CHAT_TIMEOUT_SECS: u64 = 180;
 
 /// One hit returned by the rag worker. Mirrors the rag worker's query output.
+/// Different retrieval modes populate different scoring fields:
+///   - dense → `distance` (lower = closer)
+///   - sparse → `score` (BM25, higher = better)
+///   - hybrid → `rrf_score` + `rrf_sources` (which retrievers contributed)
+/// Only one is filled for any given hit; the others stay at their default.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetrievedChunk {
     pub chunk_id: String,
@@ -37,6 +42,30 @@ pub struct RetrievedChunk {
     pub metadata: Value,
     #[serde(default, rename = "_distance")]
     pub distance: f32,
+    #[serde(default, rename = "_score")]
+    pub score: f32,
+    #[serde(default, rename = "_rrf_score")]
+    pub rrf_score: f32,
+    #[serde(default, rename = "_rrf_sources")]
+    pub rrf_sources: Vec<String>,
+}
+
+impl RetrievedChunk {
+    /// Single human-readable scoring string for log/UI lines, regardless of
+    /// which mode produced the hit. Tools use this so the citation footer
+    /// reads uniformly across dense / sparse / hybrid results.
+    #[must_use]
+    pub fn score_label(&self) -> String {
+        if !self.rrf_sources.is_empty() {
+            // Hybrid: report fused score + which retrievers contributed.
+            let srcs = self.rrf_sources.join("+");
+            format!("rrf={:.4} ({srcs})", self.rrf_score)
+        } else if self.score > 0.0 {
+            format!("bm25={:.3}", self.score)
+        } else {
+            format!("dist={:.3}", self.distance)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -50,10 +79,42 @@ struct QueryIndexArgs {
     top_k: u32,
     #[serde(default)]
     source_id: Option<String>,
+    /// Override the project's `[rag] retrieval_mode`. One of `dense | sparse | hybrid`.
+    /// Omit to use the project default (post-3.5 default is `hybrid`).
+    #[serde(default)]
+    mode: Option<String>,
 }
 
 fn default_top_k() -> u32 {
     5
+}
+
+/// Build the effective `RagConfig` for one tool invocation:
+/// start from the project's persisted `[rag]` defaults, then apply the
+/// optional per-call `mode` override. Returns an error for unknown modes.
+fn effective_rag_cfg(
+    project_cfg_rag: &crate::project::RagConfig,
+    mode_override: Option<&str>,
+    tool: &str,
+) -> Result<crate::project::RagConfig, ToolError> {
+    use crate::project::RetrievalMode;
+    let mut out = project_cfg_rag.clone();
+    if let Some(m) = mode_override {
+        out.retrieval_mode = match m {
+            "dense" => RetrievalMode::Dense,
+            "sparse" => RetrievalMode::Sparse,
+            "hybrid" => RetrievalMode::Hybrid,
+            other => {
+                return Err(ToolError::BadInput {
+                    tool: tool.into(),
+                    reason: format!(
+                        "unknown retrieval mode `{other}` (expected dense | sparse | hybrid)"
+                    ),
+                });
+            }
+        };
+    }
+    Ok(out)
 }
 
 pub struct QueryIndex;
@@ -65,14 +126,17 @@ impl Tool for QueryIndex {
             name: "query_index".into(),
             description: "Retrieve the top_k most relevant chunks from the project's LanceDB \
                           index for a natural-language query. Pure retrieval, no LLM generation. \
-                          Useful for inspecting what the rag_chat tool will see as context."
+                          Useful for inspecting what the rag_chat tool will see as context. \
+                          The optional `mode` arg overrides the project's [rag] retrieval_mode \
+                          for A/B comparison between dense, sparse (BM25), and hybrid (RRF)."
                 .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "query":     { "type": "string", "description": "Natural-language query." },
                     "top_k":     { "type": "integer", "minimum": 1, "maximum": 20, "default": 5 },
-                    "source_id": { "type": "string", "description": "Restrict to one source." }
+                    "source_id": { "type": "string", "description": "Restrict to one source." },
+                    "mode":      { "type": "string", "enum": ["dense", "sparse", "hybrid"], "description": "Retrieval mode override; defaults to the project's [rag] retrieval_mode." }
                 },
                 "required": ["query"]
             }),
@@ -86,19 +150,34 @@ impl Tool for QueryIndex {
                 reason: e.to_string(),
             })?;
         let project = ctx.current_project().await.ok_or(ToolError::NoProject)?;
-        let hits = retrieve(ctx, &project.root, &args.query, args.top_k, args.source_id.as_deref())
-            .await?;
+        let cfg = ctx.project_store.get(&project.name).map_err(ToolError::Project)?;
+        let rag_cfg = effective_rag_cfg(&cfg.rag, args.mode.as_deref(), "query_index")?;
+        let hits = retrieve(
+            ctx,
+            &project.root,
+            &args.query,
+            args.top_k,
+            args.source_id.as_deref(),
+            &rag_cfg,
+        )
+        .await?;
 
         let mut text = String::new();
-        let _ = writeln!(text, "{} hits for `{}`", hits.len(), args.query);
+        let _ = writeln!(
+            text,
+            "{} hits for `{}` (mode={})",
+            hits.len(),
+            args.query,
+            rag_cfg.retrieval_mode.as_str()
+        );
         for (i, h) in hits.iter().enumerate() {
             let snippet: String = h.text.chars().take(160).collect();
             let _ = writeln!(
                 text,
-                "{}. [{}] dist={:.3} src={} :: {}",
+                "{}. [{}] {} src={} :: {}",
                 i + 1,
                 h.chunk_id,
-                h.distance,
+                h.score_label(),
                 h.source_id,
                 snippet.replace('\n', " ")
             );
@@ -122,6 +201,11 @@ struct RagChatArgs {
     temperature: f32,
     #[serde(default)]
     source_id: Option<String>,
+    /// Override the project's `[rag] retrieval_mode`. Same semantics as
+    /// `query_index.mode`. Lets the agent A/B between modes mid-conversation
+    /// without editing project.toml.
+    #[serde(default)]
+    mode: Option<String>,
 }
 
 fn default_max_tokens() -> u32 {
@@ -151,7 +235,8 @@ impl Tool for RagChat {
                     "top_k":       { "type": "integer", "minimum": 1, "maximum": 20, "default": 5 },
                     "max_tokens":  { "type": "integer", "minimum": 32, "maximum": 4096, "default": 1024 },
                     "temperature": { "type": "number",  "minimum": 0.0, "maximum": 2.0, "default": 0.7 },
-                    "source_id":   { "type": "string", "description": "Restrict retrieval to one source." }
+                    "source_id":   { "type": "string", "description": "Restrict retrieval to one source." },
+                    "mode":        { "type": "string", "enum": ["dense", "sparse", "hybrid"], "description": "Retrieval mode override; defaults to the project's [rag] retrieval_mode." }
                 },
                 "required": ["query"]
             }),
@@ -164,6 +249,8 @@ impl Tool for RagChat {
             reason: e.to_string(),
         })?;
         let project = ctx.current_project().await.ok_or(ToolError::NoProject)?;
+        let cfg = ctx.project_store.get(&project.name).map_err(ToolError::Project)?;
+        let rag_cfg = effective_rag_cfg(&cfg.rag, args.mode.as_deref(), "rag_chat")?;
         let inference = ctx.inference.as_ref().ok_or_else(|| ToolError::Exec {
             tool: "rag_chat".into(),
             message: "InferenceManager not configured on ToolContext".into(),
@@ -175,8 +262,15 @@ impl Tool for RagChat {
         })?;
         inference.mark_used().await;
 
-        let hits = retrieve(ctx, &project.root, &args.query, args.top_k, args.source_id.as_deref())
-            .await?;
+        let hits = retrieve(
+            ctx,
+            &project.root,
+            &args.query,
+            args.top_k,
+            args.source_id.as_deref(),
+            &rag_cfg,
+        )
+        .await?;
         let prompt = assemble_prompt(&hits, &args.query);
         let answer = chat_completion(&endpoint, &prompt, args.max_tokens, args.temperature)
             .await
@@ -188,24 +282,25 @@ impl Tool for RagChat {
         let mut text = String::new();
         let _ = writeln!(text, "{answer}");
         let _ = writeln!(text);
-        let _ = writeln!(text, "--- citations ---");
+        let _ = writeln!(text, "--- citations (mode={}) ---", rag_cfg.retrieval_mode.as_str());
         for (i, h) in hits.iter().enumerate() {
             let snippet: String = h.text.chars().take(120).collect();
             let _ = writeln!(
                 text,
-                "[{}] {} (dist={:.3}) :: {}…",
+                "[{}] {} ({}) :: {}…",
                 i + 1,
                 h.chunk_id,
-                h.distance,
+                h.score_label(),
                 snippet.replace('\n', " ")
             );
         }
 
-        info!(query = %args.query, hits = hits.len(), answer_chars = answer.len(), "rag_chat");
+        info!(query = %args.query, mode = rag_cfg.retrieval_mode.as_str(), hits = hits.len(), answer_chars = answer.len(), "rag_chat");
         Ok(ToolResult::text(text).with_structured(json!({
             "answer": answer,
             "hits": hits,
             "endpoint": endpoint,
+            "mode": rag_cfg.retrieval_mode.as_str(),
         })))
     }
 }
@@ -261,12 +356,17 @@ impl Tool for OpenChatPreview {
 // ---------------------------------------------------------------------------
 
 /// Hit retrieval via the rag worker. Public so the chat-preview command can reuse it.
+///
+/// `rag_cfg` carries the retrieval mode + RRF parameters. Callers that want the
+/// project's persisted defaults pass the project's `cfg.rag` straight through;
+/// the agent-tool `mode` arg overrides the persisted default when present.
 pub async fn retrieve(
     ctx: &ToolContext,
     project_root: &std::path::Path,
     query: &str,
     top_k: u32,
     source_filter: Option<&str>,
+    rag_cfg: &crate::project::RagConfig,
 ) -> Result<Vec<RetrievedChunk>, ToolError> {
     let runner = ctx
         .python_runner
@@ -281,6 +381,10 @@ pub async fn retrieve(
         "query": query,
         "top_k": top_k,
         "source_id": source_filter,
+        "mode": rag_cfg.retrieval_mode.as_str(),
+        "k_dense": rag_cfg.hybrid_k_dense,
+        "k_sparse": rag_cfg.hybrid_k_sparse,
+        "rrf_k": rag_cfg.rrf_k,
     });
     let cmd = WorkerCommand {
         module: "narrowmind_workers.rag".into(),

@@ -117,6 +117,11 @@ impl Tool for BuildDataset {
                 "project_root": project.root,
                 "source_id": args.source_id,
                 "include_only": args.include_only,
+                // Always build the BM25 sidecar at the same time so hybrid
+                // retrieval works without a second tool call. Phase 3 vector
+                // stores migrate via the standalone rag.build_fts_index call
+                // (see build_fts_index tool) if a re-embed isn't desired.
+                "with_fts": true,
             });
             let cmd = WorkerCommand {
                 module: "narrowmind_workers.rag".into(),
@@ -130,12 +135,15 @@ impl Tool for BuildDataset {
             })?;
             let embedded = res.get("embedded").and_then(Value::as_u64).unwrap_or(0);
             let elapsed = res.get("elapsed_seconds").and_then(Value::as_f64).unwrap_or(0.0);
+            let fts_built = res.get("fts_built").and_then(Value::as_bool).unwrap_or(false);
             let _ = writeln!(
                 text,
-                "  vector_store: {embedded} embedded in {elapsed:.1}s (BGE-small)"
+                "  vector_store: {embedded} embedded in {elapsed:.1}s (BGE-small{})",
+                if fts_built { " + BM25 FTS index" } else { ", FTS index skipped" }
             );
             structured.insert("embedded".into(), json!(embedded));
             structured.insert("embed_elapsed_seconds".into(), json!(elapsed));
+            structured.insert("fts_built".into(), json!(fts_built));
         }
 
         // --- SFT path: verify pre-existing files, never auto-generate ---

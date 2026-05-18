@@ -139,3 +139,145 @@ def query(
         # LanceDB returns the embedding column too; drop it from results to keep payloads small.
         r.pop("embedding", None)
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Phase 3.5 — BM25 (full-text search) sidecar
+# ---------------------------------------------------------------------------
+# Phase 3 eval surfaced a recurring miss class: proper-noun-heavy queries
+# (Doleantie, Iamblichus, Eureqa, "Guerizoli 2006 Brill") that the BGE-small
+# dense embedder couldn't rank into top-5 even when the gold chunk was
+# clearly in the corpus. A BM25 sparse index complements dense retrieval:
+# exact term hits dominate sparse, semantic neighbours dominate dense, and
+# Reciprocal Rank Fusion merges both rankings without needing tuned weights.
+
+
+def build_fts_index(project_root: Path) -> None:
+    """(Re)build the BM25 full-text index on the ``text`` column.
+
+    Idempotent: ``replace=True`` rebuilds in place if the index already
+    exists. Cheap for our corpus sizes (<10k chunks). Callers run this
+    after a full ``upsert_chunks`` batch, not after every single row —
+    the cost is dominated by tantivy/lance-index file I/O.
+
+    Default tokenizer: ``simple`` base + English stemming + stop-word
+    removal + lower-casing. Verified that "Doleantie" and other rare
+    proper nouns survive the pipeline because they don't appear in
+    the English stop-word list and the stemmer leaves them alone.
+    """
+    db = open_db(project_root)
+    if not _table_exists(db, TABLE_NAME):
+        log.warning("FTS index build skipped: table `%s` doesn't exist", TABLE_NAME)
+        return
+    table = db.open_table(TABLE_NAME)
+    table.create_fts_index("text", replace=True)
+    log.info("built FTS index on `%s.text`", TABLE_NAME)
+
+
+def fts_query(
+    project_root: Path,
+    query_string: str,
+    top_k: int = 5,
+    source_filter: str | None = None,
+) -> list[dict[str, Any]]:
+    """BM25 query over the ``text`` column. Returns hits with ``_score`` populated
+    (higher = better, in contrast to dense ``_distance`` where lower = better).
+
+    Falls back to an empty list if the FTS index hasn't been built yet — caller
+    decides whether to surface that as an error or silently degrade to dense-only.
+    The exception is raised at query *execution* time (``to_list``), not at
+    builder construction time, so the try/except must wrap the full pipeline.
+    """
+    db = open_db(project_root)
+    if not _table_exists(db, TABLE_NAME):
+        return []
+    table = db.open_table(TABLE_NAME)
+    try:
+        q = table.search(query_string, query_type="fts").limit(top_k)
+        if source_filter:
+            safe = source_filter.replace("'", "''")
+            q = q.where(f"source_id = '{safe}'")
+        rows = q.to_list()
+    except (RuntimeError, ValueError) as e:
+        # Lance raises RuntimeError("Cannot perform full text search unless an
+        # INVERTED index has been created...") when the FTS sidecar is missing,
+        # and ValueError for other malformed-query cases. Either way the right
+        # behaviour for retrieval is "degrade gracefully" — log and return [].
+        log.warning("FTS query failed (no index?): %s", e)
+        return []
+    for r in rows:
+        try:
+            r["metadata"] = json.loads(r.get("metadata") or "{}")
+        except json.JSONDecodeError:
+            r["metadata"] = {}
+        r.pop("embedding", None)
+    return rows
+
+
+def rrf_fuse(
+    rankings: list[list[dict[str, Any]]],
+    top_k: int,
+    rrf_k: int = 60,
+) -> list[dict[str, Any]]:
+    """Reciprocal Rank Fusion across multiple ranked lists.
+
+    Standard formula:    score(d) = Σ_r  1 / (rrf_k + rank_r(d))
+    rrf_k = 60 is the canonical default (Cormack/Clarke 2009); the result
+    is dominated by documents that appear in the top of multiple rankings
+    while still rewarding strong-single-list hits.
+
+    Each input list is a list of row dicts already shaped by
+    :func:`query` / :func:`fts_query`. The output preserves the row dict
+    of the first ranking that contributed (so chunk_id / text / metadata
+    pass through), plus a ``_rrf_score`` and ``_rrf_sources`` debug field
+    that names which underlying ranker contributed.
+    """
+    if top_k <= 0:
+        return []
+    fused: dict[str, dict[str, Any]] = {}
+    scores: dict[str, float] = {}
+    sources: dict[str, list[str]] = {}
+    for source_idx, ranking in enumerate(rankings):
+        source_name = f"r{source_idx}"
+        for rank, row in enumerate(ranking, start=1):
+            cid = row.get("chunk_id")
+            if not cid:
+                continue
+            contribution = 1.0 / (rrf_k + rank)
+            scores[cid] = scores.get(cid, 0.0) + contribution
+            sources.setdefault(cid, []).append(source_name)
+            # First-wins for the canonical row payload — every ranker
+            # returns the same logical chunk, so dropping later copies
+            # is safe.
+            if cid not in fused:
+                fused[cid] = {k: v for k, v in row.items() if not k.startswith("_")}
+    # Sort by fused score descending, take top_k.
+    ordered_ids = sorted(scores.keys(), key=lambda c: scores[c], reverse=True)[:top_k]
+    out: list[dict[str, Any]] = []
+    for cid in ordered_ids:
+        row = fused[cid]
+        row["_rrf_score"] = scores[cid]
+        row["_rrf_sources"] = sources[cid]
+        out.append(row)
+    return out
+
+
+def hybrid_query(
+    project_root: Path,
+    query_string: str,
+    query_vector: list[float],
+    top_k: int = 5,
+    k_dense: int = 10,
+    k_sparse: int = 10,
+    rrf_k: int = 60,
+    source_filter: str | None = None,
+) -> list[dict[str, Any]]:
+    """Hybrid retrieval: pull ``k_dense`` from BGE-small + ``k_sparse`` from BM25,
+    fuse via Reciprocal Rank Fusion, return top ``top_k``.
+
+    Each underlying retriever runs independently — failure of one (e.g. missing
+    FTS index) degrades gracefully to the other rather than failing the request.
+    """
+    dense_hits = query(project_root, query_vector, top_k=k_dense, source_filter=source_filter)
+    sparse_hits = fts_query(project_root, query_string, top_k=k_sparse, source_filter=source_filter)
+    return rrf_fuse([dense_hits, sparse_hits], top_k=top_k, rrf_k=rrf_k)

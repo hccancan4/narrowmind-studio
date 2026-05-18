@@ -52,6 +52,11 @@ struct RunEvalArgs {
     max_tokens: u32,
     #[serde(default = "default_temperature")]
     temperature: f32,
+    /// Override the project's `[rag] retrieval_mode`. Lets one prompt sweep
+    /// `dense | sparse | hybrid` for A/B comparison without editing project.toml.
+    /// The mode tag is written into the markdown report header.
+    #[serde(default)]
+    mode: Option<String>,
 }
 
 fn default_top_k() -> u32 {
@@ -134,6 +139,33 @@ impl Tool for RunEval {
             message: "inference server not running — call start_inference_server first".into(),
         })?;
 
+        // Resolve the effective retrieval mode for this run. The project's [rag]
+        // section is the default; the `mode` arg overrides it. This is what makes
+        // multi-config eval easy from one prompt: ask the agent to run_eval three
+        // times with mode=dense, mode=sparse, mode=hybrid.
+        let proj_cfg = ctx.project_store.get(&project.name).map_err(ToolError::Project)?;
+        let rag_cfg = match args.mode.as_deref() {
+            None => proj_cfg.rag.clone(),
+            Some(m) => {
+                use crate::project::RetrievalMode;
+                let mut c = proj_cfg.rag.clone();
+                c.retrieval_mode = match m {
+                    "dense" => RetrievalMode::Dense,
+                    "sparse" => RetrievalMode::Sparse,
+                    "hybrid" => RetrievalMode::Hybrid,
+                    other => {
+                        return Err(ToolError::BadInput {
+                            tool: "run_eval".into(),
+                            reason: format!(
+                                "unknown retrieval mode `{other}` (expected dense | sparse | hybrid)"
+                            ),
+                        });
+                    }
+                };
+                c
+            }
+        };
+
         let eval_path = project.root.join("datasets").join("eval.jsonl");
         let pairs = load_pairs(&eval_path)?;
         if pairs.is_empty() {
@@ -197,6 +229,7 @@ impl Tool for RunEval {
             let top_k = args.top_k;
             let max_tokens = args.max_tokens;
             let temperature = args.temperature;
+            let rag_cfg = rag_cfg.clone();
             handles.push(tokio::spawn(async move {
                 let _permit = sem.acquire_owned().await;
                 let (sink, _drain) = tokio::sync::mpsc::unbounded_channel();
@@ -211,6 +244,7 @@ impl Tool for RunEval {
                     max_tokens,
                     temperature,
                     &judge,
+                    &rag_cfg,
                 )
                 .await
             }));
@@ -227,15 +261,29 @@ impl Tool for RunEval {
 
         let aggregate = aggregate_metrics(&results);
         let run_id = Uuid::new_v4().simple().to_string();
-        let report_path = project.root.join("evals").join(format!("{run_id}.md"));
+        // Tag the report filename with the retrieval mode so a sweep of three
+        // configs produces three distinct, self-describing files instead of
+        // three opaque UUIDs the user has to open one by one.
+        let mode_tag = rag_cfg.retrieval_mode.as_str();
+        let report_path = project
+            .root
+            .join("evals")
+            .join(format!("{run_id}-{mode_tag}.md"));
         fs::create_dir_all(report_path.parent().expect("evals parent"))?;
-        let report = render_report(&project.name, &status.repo_id.unwrap_or_default(), &aggregate, &results);
+        let report = render_report(
+            &project.name,
+            &status.repo_id.unwrap_or_default(),
+            mode_tag,
+            &aggregate,
+            &results,
+        );
         fs::write(&report_path, &report)?;
-        info!(run_id, total, recall = aggregate.recall_at_k, judge = aggregate.judge_mean, "run_eval");
+        info!(run_id, mode = mode_tag, total, recall = aggregate.recall_at_k, judge = aggregate.judge_mean, "run_eval");
 
         Ok(ToolResult::text(format!(
-            "eval done: {} pairs, recall@{}={:.2}, judge_mean={:.2}/5 → {}",
+            "eval done: {} pairs (mode={}), recall@{}={:.2}, judge_mean={:.2}/5 → {}",
             total,
+            mode_tag,
             args.top_k,
             aggregate.recall_at_k,
             aggregate.judge_mean,
@@ -243,6 +291,7 @@ impl Tool for RunEval {
         ))
         .with_structured(json!({
             "run_id": run_id,
+            "mode": mode_tag,
             "pairs": total,
             "top_k": args.top_k,
             "recall_at_k": aggregate.recall_at_k,
@@ -264,6 +313,7 @@ async fn score_pair(
     max_tokens: u32,
     temperature: f32,
     judge: &Arc<dyn Provider>,
+    rag_cfg: &crate::project::RagConfig,
 ) -> PerPairResult {
     let mut out = PerPairResult {
         index,
@@ -279,7 +329,7 @@ async fn score_pair(
     };
 
     // 1. Retrieve.
-    let hits = match retrieve(ctx, project_root, &pair.question, top_k, None).await {
+    let hits = match retrieve(ctx, project_root, &pair.question, top_k, None, rag_cfg).await {
         Ok(h) => h,
         Err(e) => {
             out.error = Some(format!("retrieve: {e}"));
@@ -401,6 +451,7 @@ fn aggregate_metrics(results: &[PerPairResult]) -> Aggregate {
 fn render_report(
     project_name: &str,
     model: &str,
+    retrieval_mode: &str,
     agg: &Aggregate,
     results: &[PerPairResult],
 ) -> String {
@@ -409,6 +460,7 @@ fn render_report(
     let _ = writeln!(s);
     let _ = writeln!(s, "- project: `{project_name}`");
     let _ = writeln!(s, "- model: `{model}`");
+    let _ = writeln!(s, "- retrieval mode: `{retrieval_mode}`");
     let _ = writeln!(s, "- timestamp: {}", Utc::now().to_rfc3339());
     let _ = writeln!(s, "- eval pairs: {}", results.len());
     let _ = writeln!(s);
