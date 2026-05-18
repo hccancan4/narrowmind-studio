@@ -38,6 +38,32 @@ A "project" is a self-contained DSLM build. On disk:
 
 The filesystem is the source of truth. The orchestrator reads/writes files; the UI is a view over them. **If state isn't on disk, it doesn't exist.**
 
+### Local Chat (Zero-API)
+
+NarrowMind Studio'nun temel UX taahhüdü: kendi DSLM'inle konuşmak için
+asla bir API çağrısına ihtiyaç duyulmaz. Ana ekrandaki "💬 Local chat"
+butonu, hiçbir orkestrasyon, hiçbir agent loop, hiçbir LLM provider
+olmadan bir chat penceresi açar:
+
+- Local inference server (llama.cpp + GGUF base + opsiyonel LoRA adapter)
+- Local embedding model (BGE-small, CPU)
+- Local vector store (LanceDB, embedded)
+
+Bootstrap path'i agent loop'unu tamamen bypass eden dedicated bir Tauri
+command'tır (`chat_preview_bootstrap`). Bu mimari taahhüt katıdır: kullanıcı
+Local Chat'i sıfır outbound API trafiğiyle açabilmelidir. Bu codebase'in
+bir özelliği olarak korunur, pazarlama iddiası değildir.
+
+Local Chat, NarrowMind Studio'yu komşu araçlardan ayırır:
+
+| Tool | Local inference | Native RAG | One-click chat |
+|---|---|---|---|
+| Ollama | ✓ | ✗ | ✓ (no RAG) |
+| LM Studio | ✓ | ✗ | ✓ (no RAG) |
+| LangChain | ✓ | ✓ | ✗ (kod gerekir) |
+| llama.cpp + custom RAG | ✓ | ✓ | ✗ (setup gerekir) |
+| **NarrowMind Studio** | ✓ | ✓ | ✓ |
+
 ---
 
 ## Repository Layout

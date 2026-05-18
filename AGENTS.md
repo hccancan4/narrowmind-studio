@@ -70,6 +70,7 @@ Do not introduce a new top-level dependency category without updating `ARCHITECT
 6. **Secrets via keychain only.** API keys never touch project files, env files committed to the repo, or logs. Use the `keyring` crate.
 7. **Streaming over polling.** Long operations (training, ingestion, inference) emit progress via RPC notifications.
 8. **When stuck, stop and ask.** If the right call isn't covered by `ARCHITECTURE.md` or `ROADMAP.md`, ask Hasancan rather than guessing on a load-bearing design decision.
+9. **Local Chat is sacred.** The Local Chat (Zero-API) path — entered via the "💬 Local chat" button on the main view — must never invoke an LLM provider API, must never route through the agent loop, and must always be reachable from the main view in one click. Any change that breaks this invariant is rejected. The `chat_preview_bootstrap` Tauri command and the `InferenceManager::ensure_running` idempotent semantics are load-bearing.
 
 ---
 

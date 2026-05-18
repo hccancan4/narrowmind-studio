@@ -8,6 +8,21 @@ Open-source desktop IDE for building **Domain-Specific Language Models (DSLMs)**
 
 ---
 
+## What makes it different
+
+**💬 Local Chat (Zero-API)** — one button on the main view opens a chat
+window backed entirely by your local hardware: llama.cpp inference,
+BGE embeddings, LanceDB vector store. Zero outbound API calls, zero
+tokens spent. Roughly three seconds from button click to first streamed
+token on a consumer GPU.
+
+This isn't a feature you turn on — it's an architectural guarantee.
+Your DSLM is always reachable without speaking to anyone else's servers.
+
+<!-- demo GIF placeholder — Phase 7'de eklenecek -->
+
+---
+
 ## What's in the box
 
 NarrowMind Studio ships three production techniques for shaping a small base model into a domain expert:

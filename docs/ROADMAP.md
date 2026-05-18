@@ -6,6 +6,8 @@ This roadmap is the build plan for v1. Phases are sequential. Each phase has exp
 
 By end of Phase 7, build **Nous Philosophy DSLM** using NarrowMind Studio itself and deploy it to the Nous website via the published SDK. A secondary dogfood target is an **op-amp tutor DSLM** built from electronics coursework material.
 
+The Nous Philosophy DSLM must be reachable via the Local Chat button — no agent intermediation. The product story stands or falls on this single click; if the dogfood DSLM can't be reached this way, the architecture is wrong, not the demo.
+
 ---
 
 ## Phase 0 — Repo Bootstrap (½ day)
@@ -162,6 +164,7 @@ By end of Phase 7, build **Nous Philosophy DSLM** using NarrowMind Studio itself
 - Contribution guide, code of conduct, issue templates
 - GitHub Actions: lint + test + Tauri release bundles (macOS, Windows, Linux)
 - Additional providers shipped: `OpenAIProvider`, `OllamaProvider`, `CustomProvider` (OpenAI-compatible endpoint)
+- **Local Chat hero positioning in README** (top of file, before any tier explanation), plus an animated demo (GIF or short video) showing: click button → window opens → first token streams → all in under 5 seconds.
 
 **Acceptance**: A stranger clones the repo, follows getting-started, and produces a working DSLM from their own PDFs within an hour. The two demo projects ship as downloadable artifacts on the docs site.
 
