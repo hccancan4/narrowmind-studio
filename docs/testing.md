@@ -134,6 +134,64 @@ inline below.
 
 ---
 
+## Smoke test history
+
+A short ledger of when the full 10-step smoke last ran cleanly. Each
+entry should link to the run_eval markdown report it produced, since
+that's the only step with non-binary output worth versioning.
+
+### 2026-05-18 — pre Phase 4 consolidation
+
+Run on commit `2090cfb` (post Phase 3 + UI polish + synth_provider).
+Build target: Tauri dev / debug profile, Windows 11, RTX 3070 + 32 GB RAM.
+
+| # | Step | Outcome |
+|---|---|---|
+| a | `pnpm tauri dev` | ✓ window opened |
+| b | Settings → API key already stored from prior session | ✓ hasKey == true |
+| c | Select `deneme1-faz2` in left rail | ✓ banner showed project name |
+| d | Dataset Browser tab | ✓ 376 / 376 chunks listed |
+| e | (covered by `f` below — agent tool dispatch path is the same) | ✓ |
+| f | Agent prompt `run_eval` → start_inference_server fired implicitly | ✓ all 29 layers `assigned to device CUDA0` |
+| g | 💬 Local chat (validated independently on commit `fee2ed6`) | ✓ previously validated |
+| h | Citations expand-on-click (validated on `fee2ed6`) | ✓ previously validated |
+| i | stop_inference_server (idle TTL watchdog covers this; explicit stop validated on prior sessions) | ✓ previously validated |
+| j | run_eval — see report below | ✓ wrote `evals/1bab695ad8a646c29fa7e72196a65c52.md` |
+
+run_eval aggregate on the Phase 3 dogfood dataset (19 hand-curated
+philosophy-of-mind Q&A pairs, Qwen2.5-7B-Instruct Q4_K_M + BGE-small +
+LanceDB, top_k=5):
+
+| metric | value | threshold | verdict |
+|---|---|---|---|
+| retrieval recall@5 | **0.79** (15/19) | ≥ 0.85 to ship | below ship bar, above revise bar |
+| LLM judge mean | **3.37 / 5** | ≥ 4.0 to ship, ≥ 3.5 to skip revise | **below revise bar — dataset/retrieval needs work before fine-tuning** |
+| judge score = 1 | 4 pairs (all four are retrieval misses → "I don't know" — model behaves correctly by refusing to hallucinate, but the gold answers exist in the corpus, so the chunker / embedder is leaving them unreachable) |
+| judge score = 5 | 5 pairs (clean retrieval + accurate answer + good grounding) |
+
+The four recall failures (pairs 7, 11, 15, 19) all share a pattern:
+the gold chunk discusses a specific named entity (Adam robot 2009 /
+Doleantie movement / Iamblichus / Guerizoli's 2006 study) that didn't
+surface in BGE-small's top-5 even though it exists in the corpus.
+Hypotheses worth testing before Phase 4 fine-tuning:
+
+- Re-chunk with smaller chunk sizes and more overlap so a single chunk
+  carries denser proper-noun signal.
+- Try a stronger embedder (BGE-large or e5-large) to see if recall@5
+  reaches 0.9+ on the same eval set without other changes.
+- Add a sparse-vector / BM25 sidecar so exact name matches don't lose
+  to dense semantic matches.
+
+The 5 pairs scoring 3 share a different pattern: retrieval was fine,
+but the model paraphrased or added plausible-sounding details not in
+the gold answer (pair 1 inverted Turing test → AI tradition mapping;
+pair 3 fabricated hostility motivation; pair 12 muddled Searle's
+position). These are exactly the failure mode that LoRA fine-tuning
+on the SFT split is designed to fix, so the Phase 4 plan isn't
+invalid — but it should follow, not precede, the retrieval fixes.
+
+---
+
 ## How to refresh this file
 
 When you add or remove tests, re-run the four baseline commands above and
