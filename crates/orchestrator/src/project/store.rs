@@ -268,6 +268,7 @@ mod tests {
         ProviderConfig {
             name: "anthropic".into(),
             model: "claude-sonnet-4-6".into(),
+            synth_model: String::new(),
         }
     }
 

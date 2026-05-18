@@ -185,7 +185,7 @@ impl Tool for GenerateSft {
             .project_store
             .get(&project.name)
             .map_err(ToolError::Project)?;
-        let model = args.model.unwrap_or(cfg.provider.model.clone());
+        let (model, model_source) = resolve_synth_model(args.model.as_deref(), &cfg.provider);
         if cfg.provider.name != "anthropic" {
             return Err(ToolError::Exec {
                 tool: "generate_sft".into(),
@@ -235,7 +235,7 @@ impl Tool for GenerateSft {
             output_rate,
         );
         let cost_msg = format!(
-            "synth_gen cost estimate: ~{est_in_tokens} input tokens, ~{est_out_tokens} output tokens, ~${est_usd:.2} USD ({chunks_needed} chunks × {pairs_per_chunk} pairs)"
+            "synth_gen cost estimate: ~{est_in_tokens} input tokens, ~{est_out_tokens} output tokens, ~${est_usd:.2} USD ({chunks_needed} chunks × {pairs_per_chunk} pairs) using model `{model}` (source: {model_source})"
         );
         emit_progress(&ctx.events, &cost_msg);
         log_to_agent_log(&project.root, &cost_msg);
@@ -560,12 +560,76 @@ fn truncate(s: &str, n: usize) -> String {
 }
 
 // ---------------------------------------------------------------------------
+/// Pick which model to use for synthesis. Three-tier fallback:
+///   1. Explicit `model` tool arg (caller-supplied, wins everything).
+///   2. `project.provider.synth_model` override (per-project Haiku-class cost hack).
+///   3. `project.provider.model` (the agent loop model — last resort, expensive).
+/// Returns the chosen model id plus a short string explaining which tier won; the
+/// caller logs it so users can see which budget pocket their `generate_sft` run hit.
+#[must_use]
+pub(crate) fn resolve_synth_model(
+    arg: Option<&str>,
+    provider: &crate::project::ProviderConfig,
+) -> (String, &'static str) {
+    if let Some(m) = arg {
+        if !m.is_empty() {
+            return (m.to_string(), "explicit arg");
+        }
+    }
+    if !provider.synth_model.is_empty() {
+        return (provider.synth_model.clone(), "project.provider.synth_model override");
+    }
+    (provider.model.clone(), "project.provider.model")
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::project::ProviderConfig;
+
+    fn provider(model: &str, synth_model: &str) -> ProviderConfig {
+        ProviderConfig {
+            name: "anthropic".into(),
+            model: model.into(),
+            synth_model: synth_model.into(),
+        }
+    }
+
+    #[test]
+    fn synth_model_falls_back_to_primary_when_unset() {
+        let p = provider("claude-sonnet-4-6", "");
+        let (m, src) = resolve_synth_model(None, &p);
+        assert_eq!(m, "claude-sonnet-4-6");
+        assert_eq!(src, "project.provider.model");
+    }
+
+    #[test]
+    fn synth_model_uses_per_project_override_when_set() {
+        let p = provider("claude-sonnet-4-6", "claude-haiku-4-5-20251001");
+        let (m, src) = resolve_synth_model(None, &p);
+        assert_eq!(m, "claude-haiku-4-5-20251001");
+        assert_eq!(src, "project.provider.synth_model override");
+    }
+
+    #[test]
+    fn synth_model_explicit_arg_beats_project_override() {
+        let p = provider("claude-sonnet-4-6", "claude-haiku-4-5-20251001");
+        let (m, src) = resolve_synth_model(Some("claude-opus-4-7"), &p);
+        assert_eq!(m, "claude-opus-4-7");
+        assert_eq!(src, "explicit arg");
+    }
+
+    #[test]
+    fn synth_model_empty_explicit_arg_treated_as_unset() {
+        let p = provider("claude-sonnet-4-6", "claude-haiku-4-5-20251001");
+        let (m, src) = resolve_synth_model(Some(""), &p);
+        assert_eq!(m, "claude-haiku-4-5-20251001");
+        assert_eq!(src, "project.provider.synth_model override");
+    }
 
     #[test]
     fn parse_pairs_accepts_bare_array() {

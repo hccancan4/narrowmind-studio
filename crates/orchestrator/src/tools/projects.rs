@@ -105,6 +105,8 @@ impl Tool for CreateProject {
         let provider = ProviderConfig {
             name: args.provider.unwrap_or_else(|| "anthropic".into()),
             model: args.model.unwrap_or_else(|| "claude-sonnet-4-6".into()),
+            // Per-project override is empty by default; users opt in via Settings dialog.
+            synth_model: String::new(),
         };
         let cfg = ctx.project_store.create(&args.name, tier, provider)?;
         let root = ctx.project_store.project_dir(&cfg.name);

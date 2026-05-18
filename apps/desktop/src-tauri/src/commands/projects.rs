@@ -53,6 +53,8 @@ pub async fn create_project(
     let provider = ProviderConfig {
         name: provider.unwrap_or_else(|| "anthropic".into()),
         model: model.unwrap_or_else(|| "claude-sonnet-4-6".into()),
+        // Per-project override is empty by default; users opt in via Settings dialog.
+        synth_model: String::new(),
     };
     let cfg = state
         .project_store
@@ -122,4 +124,45 @@ pub async fn project_status(
         status: format!("{:?}", cfg.status).to_lowercase(),
         tier: format!("{:?}", cfg.tier).to_lowercase(),
     })
+}
+
+/// Read a project's provider config (agent model + optional synth_model override).
+/// Settings dialog uses this to populate the "Synth gen model" field for the
+/// currently-selected project.
+#[derive(Debug, Serialize)]
+pub struct ProviderView {
+    pub name: String,
+    pub model: String,
+    pub synth_model: String,
+}
+
+#[tauri::command]
+pub async fn get_project_provider(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<ProviderView, String> {
+    let cfg = state.project_store.get(&name).map_err(|e| e.to_string())?;
+    Ok(ProviderView {
+        name: cfg.provider.name,
+        model: cfg.provider.model,
+        synth_model: cfg.provider.synth_model,
+    })
+}
+
+/// Set the project's cheap-synth model override. Empty string clears the override
+/// (falls back to `provider.model` for generate_sft). Per-project so users can keep
+/// Sonnet/Opus for agent reasoning while routing bulk SFT synthesis through Haiku.
+#[tauri::command]
+pub async fn set_project_synth_model(
+    state: State<'_, AppState>,
+    name: String,
+    synth_model: String,
+) -> Result<(), String> {
+    let mut cfg = state.project_store.get(&name).map_err(|e| e.to_string())?;
+    cfg.provider.synth_model = synth_model;
+    state
+        .project_store
+        .update(&cfg)
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }

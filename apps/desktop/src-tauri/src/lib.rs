@@ -124,6 +124,8 @@ pub fn run() {
             commands::projects::select_project,
             commands::projects::current_project,
             commands::projects::project_status,
+            commands::projects::get_project_provider,
+            commands::projects::set_project_synth_model,
             // agent
             commands::agent::agent_send_message,
             commands::agent::agent_reset,

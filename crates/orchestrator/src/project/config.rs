@@ -83,8 +83,15 @@ pub enum ProjectTier {
 pub struct ProviderConfig {
     /// Provider id (e.g. `"anthropic"`).
     pub name: String,
-    /// Default model id to invoke. Pulled from app Settings on project create.
+    /// Default model id for the agent loop. Pulled from app Settings on project create.
     pub model: String,
+    /// Optional cheaper model dedicated to bulk synthetic-data generation
+    /// (`generate_sft` and similar). Empty string means "fall back to `model`".
+    /// Treat as an override for cost-sensitive batch work — the agent loop itself
+    /// keeps using `model` for reasoning and tool calls. Loaded as empty string
+    /// when missing from older project.toml files so the field is back-compatible.
+    #[serde(default)]
+    pub synth_model: String,
 }
 
 impl ProjectConfig {
@@ -161,7 +168,11 @@ mod tests {
         let cfg = ProjectConfig::new(
             "demo",
             ProjectTier::Rag,
-            ProviderConfig { name: "anthropic".into(), model: "claude-opus-4-7".into() },
+            ProviderConfig {
+                name: "anthropic".into(),
+                model: "claude-opus-4-7".into(),
+                synth_model: String::new(),
+            },
         );
         assert_eq!(cfg.schema_version, SCHEMA_VERSION);
         assert_eq!(cfg.status, ProjectStatus::Draft);
@@ -174,7 +185,11 @@ mod tests {
         let cfg = ProjectConfig::new(
             "demo",
             ProjectTier::Hybrid,
-            ProviderConfig { name: "anthropic".into(), model: "claude-opus-4-7".into() },
+            ProviderConfig {
+                name: "anthropic".into(),
+                model: "claude-opus-4-7".into(),
+                synth_model: String::new(),
+            },
         );
         let s = toml::to_string(&cfg).unwrap();
         let back: ProjectConfig = toml::from_str(&s).unwrap();

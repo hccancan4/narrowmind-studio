@@ -18,6 +18,12 @@ export const settings = {
     invoke<void>("delete_provider_key", { provider }),
 };
 
+export type ProjectProvider = {
+  name: string;
+  model: string;
+  synth_model: string;
+};
+
 export const projects = {
   list: () => invoke<ProjectSummary[]>("list_projects"),
   create: (
@@ -30,6 +36,12 @@ export const projects = {
   select: (name: string) => invoke<void>("select_project", { name }),
   current: () => invoke<string | null>("current_project"),
   status: (name: string) => invoke<ProjectSummary>("project_status", { name }),
+  /** Read full provider config for one project: agent model + optional cheap synth model. */
+  getProvider: (name: string) =>
+    invoke<ProjectProvider>("get_project_provider", { name }),
+  /** Per-project override for `generate_sft`. Empty string clears the override. */
+  setSynthModel: (name: string, synthModel: string) =>
+    invoke<void>("set_project_synth_model", { name, synthModel }),
 };
 
 export const agent = {

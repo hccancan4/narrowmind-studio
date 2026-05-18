@@ -162,7 +162,11 @@ export function App() {
 
       <RightSidebar />
 
-      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        selectedProject={selectedProject}
+      />
     </div>
   );
 }
