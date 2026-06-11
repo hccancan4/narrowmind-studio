@@ -64,6 +64,32 @@ Local Chat, NarrowMind Studio'yu komşu araçlardan ayırır:
 | llama.cpp + custom RAG | ✓ | ✓ | ✗ (setup gerekir) |
 | **NarrowMind Studio** | ✓ | ✓ | ✓ |
 
+### Base Model Registry
+
+`crates/orchestrator/src/models.rs` is the single static catalog of base
+models the studio can serve and (Phase 4+) fine-tune. Each entry carries the
+metadata the serving `ModelSpec` never did: training repo (Unsloth 4-bit
+variant), GGUF source + file, tokenizer id, VRAM profile against the
+reference RTX 3070, the model's real context window (distinct from
+`SERVING_N_CTX = 4096`, our KV-cache budget on 8 GB), chat-template family,
+license, quantization caveats, and `training_supported` / `default` flags.
+
+Design rules:
+
+- **Static Rust table, not a TOML manifest.** Filesystem-as-truth governs
+  *project state*; a built-in catalog is a code constant (same reasoning as
+  the `retry::timeouts` registry). User-defined models are a Phase 5+/7
+  concern — a TOML overlay can extend the table then without changing shape.
+- **Exactly one `default: true` entry** (test-enforced). `models::default_model()`
+  is what `ModelSpec::default_qwen2_5_7b_q4km()` now delegates to; a pinning
+  test asserts the output is field-for-field identical to the pre-registry
+  literals, so the refactor cannot silently change serving behavior.
+- **`quantization_notes` are load-bearing documentation**, surfaced to the
+  user before quant swaps (e.g. Gemma 4's QAT-vs-naive-Q4_0 trap — see
+  `docs/quantization.md`).
+- Registry ids (`qwen2.5-7b-instruct`, …) are wire-stable: from Phase 4 on,
+  `project.toml`'s `base_model` field references them.
+
 ---
 
 ## Repository Layout

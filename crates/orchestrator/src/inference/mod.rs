@@ -43,7 +43,11 @@ pub struct ModelSpec {
 }
 
 impl ModelSpec {
-    /// Phase 3 default model.
+    /// Phase 3 default model — now a thin delegation into the base model
+    /// registry (`crate::models`), kept under its historical name so the two
+    /// call sites (start_inference_server tool, chat_preview_bootstrap) don't
+    /// churn. A registry unit test pins the output field-for-field to the
+    /// pre-registry literals, so this indirection is provably behavior-neutral.
     ///
     /// `n_gpu_layers = -1` offloads every layer to the GPU. The Windows install pulls the
     /// CUDA-enabled cu125 llama-cpp-python wheel from abetlen's GitHub releases (see
@@ -53,12 +57,7 @@ impl ModelSpec {
     /// via the `n_gpu_layers` arg on `start_inference_server` if CUDA isn't available.
     #[must_use]
     pub fn default_qwen2_5_7b_q4km() -> Self {
-        Self {
-            repo_id: "bartowski/Qwen2.5-7B-Instruct-GGUF".into(),
-            filename: "Qwen2.5-7B-Instruct-Q4_K_M.gguf".into(),
-            n_ctx: 4096,
-            n_gpu_layers: -1,
-        }
+        crate::models::default_model().to_model_spec()
     }
 }
 

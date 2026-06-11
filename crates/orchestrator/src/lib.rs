@@ -8,6 +8,7 @@ pub mod app_paths;
 pub mod error;
 pub mod hello;
 pub mod inference;
+pub mod models;
 pub mod project;
 pub mod retry;
 pub mod secrets;
@@ -23,6 +24,7 @@ pub use inference::{
     InferenceError, InferenceManager, InferenceStatus, ModelSpec,
     DEFAULT_PORT as INFERENCE_DEFAULT_PORT, IDLE_TTL as INFERENCE_IDLE_TTL,
 };
+pub use models::{BaseModel, ChatTemplateFormat, VramProfile};
 pub use project::{
     validate_name, ProjectConfig, ProjectError, ProjectStatus, ProjectStore, ProjectTier,
     ProviderConfig, RagConfig, RetrievalMode, SynthConfig, SCHEMA_VERSION,
