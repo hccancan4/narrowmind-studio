@@ -6,6 +6,7 @@ from narrowmind_workers.rpc.server import (
     Method,
     MethodRegistry,
     error_codes,
+    notify,
     serve_stdio,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "Method",
     "MethodRegistry",
     "error_codes",
+    "notify",
     "serve_stdio",
 ]

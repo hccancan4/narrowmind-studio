@@ -37,6 +37,12 @@ pub enum WorkerError {
     #[error("worker timed out after {seconds}s for method `{method}`")]
     Timeout { method: String, seconds: u64 },
 
+    /// The caller cancelled an in-flight streaming call (`call_worker_streaming`'s
+    /// cancel channel fired). The child is killed before this returns; partial
+    /// progress already streamed via notifications remains valid.
+    #[error("worker call cancelled for method `{method}`")]
+    Cancelled { method: String },
+
     /// `Stdio::piped()` did not yield a stream handle. Indicates a `tokio::process` bug or OS
     /// resource exhaustion; in practice this is unreachable for our configuration.
     #[error("worker stdio handle missing ({stream}); this indicates a tokio/OS regression")]

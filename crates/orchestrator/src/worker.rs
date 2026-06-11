@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::error::WorkerError;
 use crate::retry::timeouts;
@@ -224,6 +224,209 @@ fn workspace_or_self(cwd: &Path) -> PathBuf {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     } else {
         cwd.to_path_buf()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// One-shot WITH streaming notifications (Phase 4 — training metrics)
+// ---------------------------------------------------------------------------
+
+/// One-shot worker call that surfaces JSON-RPC notifications mid-flight.
+///
+/// Same lifecycle as [`call_worker`] — spawn, one request, one response,
+/// child exits; kill = clean cancel; **no retry** — but the read phase is the
+/// pool's id-matching loop: id-less frames (`{"jsonrpc","method","params"}`)
+/// are dispatched to `on_notify(method, params)` instead of being treated as
+/// protocol errors. Built for hours-long training runs that stream a
+/// `training.metric` notification every step.
+///
+/// Timeout semantics are **activity-based**, not total-deadline: `idle_timeout`
+/// measures *silence*. Every frame (notification or response) refreshes the
+/// timer, so a 3-hour run with steady step events needs no absurd static
+/// ceiling, while a genuinely wedged worker is reaped after one quiet window.
+///
+/// `cancel` is a `watch::Receiver<bool>`: flip the sender to `true` to kill
+/// the child and return [`WorkerError::Cancelled`]. Progress already streamed
+/// stays valid (the training worker persists `metrics.jsonl` itself).
+pub async fn call_worker_streaming(
+    runner: &PythonRunner,
+    cmd: &WorkerCommand,
+    idle_timeout: Duration,
+    mut cancel: tokio::sync::watch::Receiver<bool>,
+    mut on_notify: impl FnMut(&str, &Value) + Send,
+) -> Result<Value, WorkerError> {
+    let mut child = build_command(runner, &cmd.module)
+        .spawn()
+        .map_err(|source| WorkerError::Spawn {
+            program: runner.program.clone(),
+            cwd: runner.cwd.clone(),
+            source,
+        })?;
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or(WorkerError::StdioMissing { stream: "stdin" })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or(WorkerError::StdioMissing { stream: "stdout" })?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or(WorkerError::StdioMissing { stream: "stderr" })?;
+
+    // Drain stderr continuously (same rationale as the pool: an undrained
+    // pipe blocks a chatty child after ~64 KB, which reads as a hang).
+    // Keep a bounded tail for traceback attachment on failure.
+    let stderr_tail = std::sync::Arc::new(std::sync::Mutex::new(
+        std::collections::VecDeque::<String>::with_capacity(100),
+    ));
+    let tail_for_task = stderr_tail.clone();
+    let stderr_task = tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            debug!(target: "worker_stderr", "{line}");
+            let mut tail = tail_for_task.lock().expect("stderr tail poisoned");
+            if tail.len() == 100 {
+                tail.pop_front();
+            }
+            tail.push_back(line);
+        }
+    });
+    let tail_snapshot = |t: &std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>| {
+        t.lock()
+            .map(|d| d.iter().cloned().collect::<Vec<_>>().join("\n"))
+            .unwrap_or_default()
+    };
+
+    const REQUEST_ID: u64 = 1;
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": REQUEST_ID,
+        "method": cmd.method,
+        "params": cmd.params,
+    });
+    let mut payload = serde_json::to_vec(&request).map_err(|e| WorkerError::MalformedResponse {
+        message: format!("could not serialize request: {e}"),
+        raw: String::new(),
+    })?;
+    payload.push(b'\n');
+    stdin.write_all(&payload).await?;
+    stdin.flush().await?;
+    // Keep stdin OPEN: closing it would make serve_forever exit after this
+    // request, which is fine for the result but would race the final frames.
+    // The child exits when we drop stdin after the loop (or on kill).
+
+    let mut reader = BufReader::new(stdout);
+    let kill = |child: &mut tokio::process::Child| {
+        let _ = child.start_kill();
+    };
+
+    // When the cancel sender is dropped (caller doesn't care about cancel),
+    // `changed()` resolves with Err instantly and forever — gate the branch
+    // off after the first Err so the select! doesn't busy-loop.
+    let mut cancel_open = true;
+
+    loop {
+        let mut line = String::new();
+        let n = tokio::select! {
+            read = reader.read_line(&mut line) => match read {
+                Ok(n) => n,
+                Err(e) => {
+                    kill(&mut child);
+                    let _ = child.wait().await;
+                    stderr_task.abort();
+                    return Err(WorkerError::Io(e));
+                }
+            },
+            _ = tokio::time::sleep(idle_timeout) => {
+                warn!(method = %cmd.method, idle_secs = idle_timeout.as_secs(), "streaming worker idle past threshold; killing");
+                kill(&mut child);
+                let _ = child.wait().await;
+                stderr_task.abort();
+                return Err(WorkerError::Timeout {
+                    method: cmd.method.clone(),
+                    seconds: idle_timeout.as_secs(),
+                });
+            }
+            changed = cancel.changed(), if cancel_open => {
+                match changed {
+                    Ok(()) if *cancel.borrow() => {
+                        info!(method = %cmd.method, "streaming worker call cancelled by caller");
+                        kill(&mut child);
+                        let _ = child.wait().await;
+                        stderr_task.abort();
+                        return Err(WorkerError::Cancelled { method: cmd.method.clone() });
+                    }
+                    Ok(()) => continue,          // spurious false flip — ignore
+                    Err(_) => { cancel_open = false; continue } // sender dropped
+                }
+            }
+        };
+
+        if n == 0 {
+            // EOF before the response: the worker died mid-run.
+            let status = child.wait().await.map(|s| format!("{s}")).unwrap_or_else(|e| e.to_string());
+            stderr_task.abort();
+            return Err(WorkerError::EarlyExit {
+                status,
+                stderr: tail_snapshot(&stderr_tail),
+            });
+        }
+
+        let trimmed = line.trim_end();
+        let frame: Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(e) => {
+                kill(&mut child);
+                let _ = child.wait().await;
+                stderr_task.abort();
+                return Err(WorkerError::MalformedResponse {
+                    message: e.to_string(),
+                    raw: trimmed.to_string(),
+                });
+            }
+        };
+
+        // Notification: id-less frame with a method — stream to the caller
+        // and refresh the idle window (the select! loop restarts the sleep).
+        if frame.get("id").is_none() {
+            if let Some(method) = frame.get("method").and_then(Value::as_str) {
+                let params = frame.get("params").cloned().unwrap_or(Value::Null);
+                on_notify(method, &params);
+            } else {
+                debug!(raw = %trimmed, "skipping id-less frame without method");
+            }
+            continue;
+        }
+
+        // Response frame: must match our request id.
+        if frame.get("id").and_then(Value::as_u64) != Some(REQUEST_ID) {
+            debug!(raw = %trimmed, "skipping frame with unexpected id");
+            continue;
+        }
+
+        drop(stdin); // EOF → serve_forever ends → child exits cleanly
+        let _ = child.wait().await;
+        stderr_task.abort();
+
+        if let Some(err) = frame.get("error") {
+            let code = err.get("code").and_then(Value::as_i64).unwrap_or(-1);
+            let message = err
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown rpc error")
+                .to_string();
+            return Err(WorkerError::Rpc { code, message });
+        }
+        return frame
+            .get("result")
+            .cloned()
+            .ok_or_else(|| WorkerError::MalformedResponse {
+                message: "response had neither result nor error".into(),
+                raw: trimmed.to_string(),
+            });
     }
 }
 

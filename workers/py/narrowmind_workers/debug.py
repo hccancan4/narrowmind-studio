@@ -32,6 +32,7 @@ def register_debug_methods(registry: MethodRegistry) -> None:
     registry.register("debug.sleep", _sleep)
     registry.register("debug.exit", _exit)
     registry.register("debug.spam_stderr", _spam_stderr)
+    registry.register("debug.notify_storm", _notify_storm)
 
 
 def _sleep(params: dict[str, Any]) -> dict[str, Any]:
@@ -56,3 +57,23 @@ def _spam_stderr(params: dict[str, Any]) -> dict[str, Any]:
         written += len(line) + 1
     sys.stderr.flush()
     return {"wrote_stderr_bytes": written}
+
+
+def _notify_storm(params: dict[str, Any]) -> dict[str, Any]:
+    """Emit ``count`` notifications spaced ``interval_ms`` apart, then return.
+
+    The streaming-call test fixture: exercises the Rust side's id-matching
+    read loop (skip id-less frames, surface them via callback) and the
+    activity-based deadline (each notification must refresh the idle timer —
+    a storm whose TOTAL duration exceeds the idle timeout but whose
+    inter-notification gap stays under it must complete successfully).
+    """
+    from narrowmind_workers.rpc import notify
+
+    count = int(params.get("count", 5))
+    interval_ms = int(params.get("interval_ms", 0))
+    for i in range(count):
+        if interval_ms > 0:
+            time.sleep(interval_ms / 1000.0)
+        notify("debug.tick", {"seq": i, "of": count})
+    return {"notified": count}

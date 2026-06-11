@@ -31,7 +31,7 @@ use serde_json::{json, Value};
 use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
-use super::context::{ToolContext, ToolEvent};
+use super::context::ToolContext;
 use super::registry::{Tool, ToolDef, ToolError, ToolResult};
 use crate::project::SynthConfig;
 use crate::secrets::SecretStore;

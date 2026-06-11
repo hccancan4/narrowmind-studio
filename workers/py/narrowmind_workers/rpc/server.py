@@ -153,6 +153,42 @@ def _error_response(request_id: Any, code: int, message: str) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
 
 
+# ---------------------------------------------------------------------------
+# Outbound notifications (Phase 4 — one-shot-with-streaming)
+# ---------------------------------------------------------------------------
+
+# The protocol stdout handle, captured by serve_stdio before sys.stdout is
+# redirected to stderr. Notifications must write HERE — writing to sys.stdout
+# after the hijack would land in the log, not the RPC stream.
+_PROTO_OUT: Any = None
+
+
+def notify(method: str, params: dict[str, Any]) -> None:
+    """Send a JSON-RPC notification (id-less frame) to the orchestrator.
+
+    Contract with the Rust side (``call_worker_streaming`` /
+    ``WorkerPool::roundtrip``): frames without an ``id`` are notifications
+    belonging to the currently in-flight request — calls are serialized, so
+    no correlation id is needed. Handlers call this freely mid-execution to
+    stream progress (training metrics, download percentages).
+
+    Threading: call ONLY from the handler thread. The server is
+    single-threaded and so is this writer — no locking, by design. A handler
+    that spawns background threads must funnel notifications back to its own
+    thread before calling this.
+
+    No-op (with a warning) when invoked outside ``serve_stdio`` — e.g. from
+    unit tests that call handlers directly — so handlers don't need an
+    "am I being served?" guard.
+    """
+    if _PROTO_OUT is None:
+        log.warning("notify(%s) called outside serve_stdio; dropping", method)
+        return
+    frame = {"jsonrpc": "2.0", "method": method, "params": params}
+    _PROTO_OUT.write(json.dumps(frame, ensure_ascii=False) + "\n")
+    _PROTO_OUT.flush()
+
+
 def serve_stdio(registry: MethodRegistry) -> None:
     """Convenience entry point: configure stderr logging and serve.
 
@@ -189,6 +225,11 @@ def serve_stdio(registry: MethodRegistry) -> None:
 
     proto_stdout = sys.stdout
     sys.stdout = sys.stderr  # any leak now lands in our log file, not the RPC stream
+
+    # Expose the protocol channel to notify() — handlers stream progress
+    # through the same fd the responses use, interleaved as id-less frames.
+    global _PROTO_OUT
+    _PROTO_OUT = proto_stdout
 
     logging.basicConfig(
         stream=sys.stderr,

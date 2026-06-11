@@ -35,7 +35,7 @@ pub use tools::{
     ToolEvent, ToolRegistry, ToolResult,
 };
 pub use retry::{with_backoff, BackoffPolicy, Retry};
-pub use worker::{PythonRunner, WorkerCommand};
+pub use worker::{call_worker_streaming, PythonRunner, WorkerCommand};
 pub use worker_pool::{PooledWorkerStatus, WorkerPool};
 
 /// Crate version string, surfaced through Tauri so the UI can report build info.
