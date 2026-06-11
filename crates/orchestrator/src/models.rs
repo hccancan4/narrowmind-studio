@@ -124,6 +124,38 @@ static REGISTRY: &[BaseModel] = &[
         training_supported: true,
         default: true,
     },
+    BaseModel {
+        id: "gemma-4-12b-it",
+        display_name: "Gemma 4 12B Instruct",
+        // Exact bnb-4bit variant name re-verified at Phase 4.5 entry; the
+        // instruct base is the anchor either way.
+        hf_repo: "unsloth/gemma-4-12b-it",
+        // QAT-aware GGUFs ONLY — see quantization_notes and
+        // docs/quantization.md. Generic conversions of the QAT checkpoints
+        // measurably destroy accuracy.
+        gguf_repo: "unsloth/gemma-4-12B-it-qat-GGUF",
+        gguf_file: "gemma-4-12b-it-qat-Q4_K_M.gguf",
+        tokenizer_id: "google/gemma-4-12B-it",
+        vram: VramProfile {
+            min_vram_gb: 6.6,
+            recommended_quant: "Q4_K_M (QAT)",
+        },
+        context_window: 262_144,
+        chat_template: ChatTemplateFormat::Gemma,
+        license: "Apache-2.0",
+        quantization_notes: "Official QAT (quantization-aware training) \
+            checkpoints, released 2026-06-05. NEVER convert the QAT weights \
+            naively to Q4_0: llama.cpp's F16-scale conversion against \
+            BF16-trained scales measurably loses 8.8-15.4 accuracy points \
+            across the Gemma 4 family; use Unsloth's QAT-aware dynamic GGUFs \
+            only. QLoRA fine-tune needs 8-10 GB VRAM (at the RTX 3070 8 GB \
+            floor — monitor for OOM). Turkish quality unverified — eval \
+            before production use for Turkish domains.",
+        // Unsloth Gemma 4 support confirmed 2026-06 (text/vision/audio/RL,
+        // 12B QLoRA on consumer GPUs) — re-verify at Phase 4.5 entry.
+        training_supported: true,
+        default: false,
+    },
 ];
 
 /// Every registered model, presentation order.
@@ -163,6 +195,7 @@ mod tests {
     #[test]
     fn lookup_hit_and_miss() {
         assert_eq!(get("qwen2.5-7b-instruct").unwrap().display_name, "Qwen2.5 7B Instruct");
+        assert_eq!(get("gemma-4-12b-it").unwrap().display_name, "Gemma 4 12B Instruct");
         assert!(get("nonexistent-model").is_none());
         assert!(get("").is_none());
     }
@@ -231,6 +264,24 @@ mod tests {
         // Phase 4 trains the default; a non-trainable default would dead-end
         // the primary flow.
         assert!(default_model().training_supported);
+    }
+
+    #[test]
+    fn gemma_entry_is_qat_aware_and_non_default() {
+        let g = get("gemma-4-12b-it").unwrap();
+        assert!(!g.default, "Phase 4 ships on Qwen; Gemma is the 4.5 comparison");
+        assert!(g.training_supported, "Unsloth support confirmed 2026-06");
+        assert!(
+            g.gguf_repo.to_lowercase().contains("qat"),
+            "Gemma 4 GGUF source must be a QAT-aware repo, got `{}`",
+            g.gguf_repo
+        );
+        assert!(g.quantization_notes.contains("NEVER convert the QAT weights"));
+        assert!(g.quantization_notes.contains("Turkish quality unverified"));
+        assert_eq!(g.chat_template, ChatTemplateFormat::Gemma);
+        assert_eq!(g.context_window, 262_144);
+        // Fits the reference card for INFERENCE; training is at the floor.
+        assert!(g.vram.min_vram_gb <= 8.0);
     }
 
     #[test]
