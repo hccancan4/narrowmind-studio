@@ -97,6 +97,7 @@ pub fn run() {
             // tokio::spawn directly — the latter panics in .setup() because no tokio
             // current-runtime is set there). Tauri's wrapper enqueues onto its managed
             // tokio rt, where tokio::time::sleep / mpsc work as expected.
+            use tauri::Emitter as _;
             use tauri::Manager as _;
             let state: tauri::State<'_, AppState> = app.state();
             let inference = state.inference.as_ref().clone();
@@ -106,6 +107,25 @@ pub fn run() {
                 loop {
                     tokio::time::sleep(tick).await;
                     inference.check_idle_and_stop(ttl).await;
+                }
+            });
+
+            // Forward live training events to the UI ("training:event"). The
+            // broadcast subscription outlives any single agent turn, so the
+            // Training Monitor keeps streaming after the tool call returns.
+            let mut training_events = state.training.subscribe();
+            let app_for_training = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    match training_events.recv().await {
+                        Ok(ev) => {
+                            let _ = app_for_training.emit("training:event", &ev);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!(skipped = n, "training event subscriber lagged");
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
                 }
             });
             Ok(())
@@ -150,7 +170,12 @@ pub fn run() {
                 let state: tauri::State<'_, AppState> = app_handle.state();
                 let pool = state.worker_pool.clone();
                 let inference = state.inference.clone();
+                let training = state.training.clone();
                 tauri::async_runtime::block_on(async move {
+                    // Request training cancellation first: the streaming call's
+                    // cancel path kills the WSL child and patches status.json,
+                    // so the run reads "cancelled" (not orphaned) on next start.
+                    training.stop().await;
                     pool.shutdown().await;
                     inference.stop().await;
                 });

@@ -60,6 +60,7 @@ pub fn default_registry() -> ToolRegistry {
     use crate::tools::rag::{OpenChatPreview, QueryIndex, RagChat};
     use crate::tools::run_command::RunCommand;
     use crate::tools::synth_gen::GenerateSft;
+    use crate::tools::training::{ListRuns, StartTraining, StopTraining, TestAdapter};
 
     let mut r = ToolRegistry::new();
     r.register(Arc::new(ReadFile));
@@ -80,5 +81,9 @@ pub fn default_registry() -> ToolRegistry {
     r.register(Arc::new(RagChat));
     r.register(Arc::new(OpenChatPreview));
     r.register(Arc::new(RunEval));
+    r.register(Arc::new(StartTraining));
+    r.register(Arc::new(StopTraining));
+    r.register(Arc::new(ListRuns));
+    r.register(Arc::new(TestAdapter));
     r
 }

@@ -18,6 +18,7 @@ pub mod registry;
 pub mod run_command;
 pub mod sandbox;
 pub mod synth_gen;
+pub mod training;
 pub(crate) mod util;
 
 pub use context::{

@@ -48,6 +48,19 @@ pub enum ChatTemplateFormat {
     Llama,
 }
 
+impl ChatTemplateFormat {
+    /// Wire string shared with the Python training worker's `chat_template`
+    /// param ("chatml" | "gemma" | "llama"). Renaming breaks the contract.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ChatMl => "chatml",
+            Self::Gemma => "gemma",
+            Self::Llama => "llama",
+        }
+    }
+}
+
 /// VRAM guidance for the reference-hardware check (RTX 3070, 8 GB).
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct VramProfile {

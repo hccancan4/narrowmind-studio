@@ -13,6 +13,7 @@ pub mod project;
 pub mod retry;
 pub mod secrets;
 pub mod tools;
+pub mod training;
 pub mod worker;
 pub mod worker_pool;
 
@@ -27,7 +28,7 @@ pub use inference::{
 pub use models::{BaseModel, ChatTemplateFormat, VramProfile};
 pub use project::{
     validate_name, ProjectConfig, ProjectError, ProjectStatus, ProjectStore, ProjectTier,
-    ProviderConfig, RagConfig, RetrievalMode, SynthConfig, SCHEMA_VERSION,
+    ProviderConfig, RagConfig, RetrievalMode, SynthConfig, TrainingConfig, SCHEMA_VERSION,
 };
 pub use secrets::{SecretError, SecretStore};
 pub use tools::{
@@ -35,6 +36,7 @@ pub use tools::{
     ToolEvent, ToolRegistry, ToolResult,
 };
 pub use retry::{with_backoff, BackoffPolicy, Retry};
+pub use training::{TrainingEvent, TrainingManager, TrainingStatus};
 pub use worker::{call_worker_streaming, PythonRunner, WorkerCommand};
 pub use worker_pool::{PooledWorkerStatus, WorkerPool};
 

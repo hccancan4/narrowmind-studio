@@ -106,7 +106,16 @@ export function App() {
     if (!selectedProject || localChatBusy) return;
     setLocalChatBusy(true);
     try {
-      await chat.bootstrap();
+      const ctx = await chat.bootstrap();
+      // KARAR 1: a training run owns the VRAM. Don't kill it for chat —
+      // report honestly and leave the run alone.
+      if (ctx.training_active) {
+        termRef.current?.writeError(
+          `Training in progress — chat unavailable until it completes (run ${ctx.run_id ?? "?"}, step ${ctx.step ?? 0}/${ctx.total_steps ?? 0}). Stop it with stop_training if you need the GPU now.`,
+        );
+        setLocalChatBusy(false);
+        return;
+      }
     } catch (e) {
       termRef.current?.writeError(`local chat: ${e}`);
       setLocalChatBusy(false);

@@ -7,6 +7,6 @@ pub mod store;
 
 pub use config::{
     validate_name, ProjectConfig, ProjectStatus, ProjectTier, ProviderConfig, RagConfig,
-    RetrievalMode, SynthConfig, SCHEMA_VERSION,
+    RetrievalMode, SynthConfig, TrainingConfig, SCHEMA_VERSION,
 };
 pub use store::{ProjectError, ProjectStore};

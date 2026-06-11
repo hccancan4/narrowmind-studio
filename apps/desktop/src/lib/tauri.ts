@@ -120,6 +120,12 @@ export type ChatPreviewContext = {
   model: string | null;
   filename: string | null;
   running: boolean;
+  /** KARAR 1: set by bootstrap when a training run owns the VRAM. The chat
+   *  window is NOT opened; the caller shows an honest status instead. */
+  training_active?: boolean;
+  run_id?: string;
+  step?: number;
+  total_steps?: number;
 };
 
 export type ChatHit = {

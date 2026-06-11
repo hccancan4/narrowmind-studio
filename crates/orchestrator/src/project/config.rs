@@ -51,6 +51,10 @@ pub struct ProjectConfig {
     /// created before Phase 3.5 added hybrid retrieval.
     #[serde(default)]
     pub rag: RagConfig,
+    /// QLoRA training configuration (Phase 4). Preset id + optional per-knob
+    /// overrides; missing section = all defaults (rtx-3070-8gb preset).
+    #[serde(default)]
+    pub training: TrainingConfig,
 }
 
 /// Recorded once per project on the first `generate_sft` run so subsequent runs reproduce
@@ -112,6 +116,72 @@ impl Default for RagConfig {
             hybrid_k_dense: Self::default_hybrid_k_dense(),
             hybrid_k_sparse: Self::default_hybrid_k_sparse(),
             rrf_k: Self::default_rrf_k(),
+        }
+    }
+}
+
+/// Phase 4 `[training]` section: a hardware-preset id plus optional overrides.
+/// `None` override = use the preset's value (see `crate::training::preset`).
+/// Back-compat by construction: every field is serde-defaulted, so pre-Phase-4
+/// project.toml files load with the rtx-3070-8gb defaults.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TrainingConfig {
+    /// Preset key into `crate::training::preset` (default "rtx-3070-8gb").
+    #[serde(default = "TrainingConfig::default_preset_id")]
+    pub preset: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lora_r: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lora_alpha: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_seq_length: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub learning_rate: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub num_train_epochs: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_device_train_batch_size: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gradient_accumulation_steps: Option<u32>,
+    /// Explicit training seed. When absent, the tool derives one from
+    /// `[synth] split_seed` (same project → reproducible by default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+    /// Activity-based deadline for the streaming worker call: a run is
+    /// considered hung after this many seconds of SILENCE (notifications
+    /// refresh the timer). 600 s default — model download + first-step
+    /// compile both stay comfortably under it on the reference machine.
+    #[serde(default = "TrainingConfig::default_idle_timeout_secs")]
+    pub idle_timeout_secs: u64,
+    /// Most recent run id, written by the manager when a run reaches a
+    /// terminal state (KARAR 5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_id: Option<String>,
+}
+
+impl TrainingConfig {
+    fn default_preset_id() -> String {
+        "rtx-3070-8gb".into()
+    }
+    fn default_idle_timeout_secs() -> u64 {
+        600
+    }
+}
+
+impl Default for TrainingConfig {
+    fn default() -> Self {
+        Self {
+            preset: Self::default_preset_id(),
+            lora_r: None,
+            lora_alpha: None,
+            max_seq_length: None,
+            learning_rate: None,
+            num_train_epochs: None,
+            per_device_train_batch_size: None,
+            gradient_accumulation_steps: None,
+            seed: None,
+            idle_timeout_secs: Self::default_idle_timeout_secs(),
+            last_run_id: None,
         }
     }
 }
@@ -195,6 +265,7 @@ impl ProjectConfig {
             provider,
             synth: None,
             rag: RagConfig::default(),
+            training: TrainingConfig::default(),
         }
     }
 }

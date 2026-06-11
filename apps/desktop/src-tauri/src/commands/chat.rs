@@ -138,6 +138,21 @@ pub async fn chat_preview_bootstrap(
         return Err("select a project first".into());
     }
 
+    // KARAR 1: training owns the VRAM. Local Chat NEVER interrupts a run —
+    // it reports the situation honestly instead. ("Local Chat is sacred"
+    // means always reachable in one click, not "kills training on click".)
+    let training = state.training.status().await;
+    if training.active {
+        return Ok(json!({
+            "training_active": true,
+            "run_id": training.run_id,
+            "step": training.step,
+            "total_steps": training.total_steps,
+            "project": training.project,
+            "running": false,
+        }));
+    }
+
     let model = ModelSpec::default_qwen2_5_7b_q4km();
     let endpoint = state
         .inference

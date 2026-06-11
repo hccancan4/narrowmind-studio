@@ -76,6 +76,11 @@ pub struct ToolContext {
     /// Batch tools (ingestion, embed, downloads) deliberately stay on the one-shot
     /// `call_worker` path — see `crate::worker_pool` docs for the split rationale.
     pub worker_pool: Option<Arc<WorkerPool>>,
+    /// Training lifecycle manager (Phase 4). `None` only in unit tests.
+    pub training: Option<Arc<crate::training::TrainingManager>>,
+    /// Runner for the WSL2 training environment (workers/py-training). Distinct
+    /// from `python_runner` (the CPU env) — see docs/dev-setup.md § Training.
+    pub training_runner: Option<Arc<PythonRunner>>,
 }
 
 impl ToolContext {
@@ -92,6 +97,8 @@ impl ToolContext {
             python_runner: None,
             inference: None,
             worker_pool: None,
+            training: None,
+            training_runner: None,
         }
     }
 
@@ -114,6 +121,18 @@ impl ToolContext {
     #[must_use]
     pub fn with_worker_pool(mut self, pool: Arc<WorkerPool>) -> Self {
         self.worker_pool = Some(pool);
+        self
+    }
+
+    /// Attach the training manager + the WSL training-env runner (Phase 4).
+    #[must_use]
+    pub fn with_training(
+        mut self,
+        manager: Arc<crate::training::TrainingManager>,
+        runner: Arc<PythonRunner>,
+    ) -> Self {
+        self.training = Some(manager);
+        self.training_runner = Some(runner);
         self
     }
 

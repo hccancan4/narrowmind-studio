@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use narrowmind_agent::Message;
 use narrowmind_orchestrator::{
-    default_registry, hf_cache_env, new_selected_project, InferenceManager, ProjectStore,
-    PythonRunner, SelectedProject, ToolRegistry, WorkerPool,
+    default_registry, hf_cache_env, new_selected_project, training, InferenceManager,
+    ProjectStore, PythonRunner, SelectedProject, ToolRegistry, TrainingManager, WorkerPool,
 };
 use tokio::sync::Mutex;
 
@@ -32,12 +32,18 @@ pub struct AppState {
     /// tens of ms instead of a per-call ~5-8 s cold spawn. Shut down on
     /// `RunEvent::Exit` in lib.rs so no python.exe outlives the app.
     pub worker_pool: Arc<WorkerPool>,
+    /// QLoRA training lifecycle (Phase 4). One run at a time, VRAM hard mutex
+    /// against `inference` (KARAR 1). Cancellation requested on app exit.
+    pub training: Arc<TrainingManager>,
+    /// Runner for the WSL2 training environment (workers/py-training) —
+    /// distinct from `python_runner` (the CPU env).
+    pub training_runner: Arc<PythonRunner>,
 }
 
 impl AppState {
     pub fn new(project_store: Arc<ProjectStore>, workspace_root: PathBuf) -> Self {
         let registry = Arc::new(default_registry());
-        let mut runner = PythonRunner::uv_workspace(workspace_root);
+        let mut runner = PythonRunner::uv_workspace(workspace_root.clone());
         if let Ok(env) = hf_cache_env() {
             for (k, v) in env {
                 runner = runner.with_env(k, v);
@@ -52,6 +58,10 @@ impl AppState {
         // WorkerPool::new spawns nothing (lazy) — safe before the Tauri runtime
         // exists, unlike the watchdog above.
         let worker_pool = Arc::new(WorkerPool::new(python_runner.clone()));
+        // Training: manager is lazy too; the runner targets the WSL2 env via
+        // run-worker.sh (env decisions live in that script, not here).
+        let training = Arc::new(TrainingManager::new());
+        let training_runner = Arc::new(training::wsl::training_runner(&workspace_root));
         Self {
             project_store,
             tool_registry: registry,
@@ -60,6 +70,8 @@ impl AppState {
             python_runner,
             inference,
             worker_pool,
+            training,
+            training_runner,
         }
     }
 }
