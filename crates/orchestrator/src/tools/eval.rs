@@ -216,6 +216,11 @@ impl Tool for RunEval {
         // need the agent's event sink for eval (it has its own report).
         let store = ctx.project_store.clone();
         let selected = ctx.selected.clone();
+        // Share the outer context's WorkerPool across every task: all parallel
+        // retrievals then hit ONE warm Python child (serialized ~50-300ms each)
+        // instead of spawning `parallelism` cold processes each loading its own
+        // copy of BGE-small.
+        let pool = ctx.worker_pool.clone();
 
         let mut handles = Vec::with_capacity(total);
         for (i, pair) in pairs.into_iter().enumerate() {
@@ -226,6 +231,7 @@ impl Tool for RunEval {
             let runner = runner.clone();
             let store = store.clone();
             let selected = selected.clone();
+            let pool = pool.clone();
             let top_k = args.top_k;
             let max_tokens = args.max_tokens;
             let temperature = args.temperature;
@@ -233,7 +239,11 @@ impl Tool for RunEval {
             handles.push(tokio::spawn(async move {
                 let _permit = sem.acquire_owned().await;
                 let (sink, _drain) = tokio::sync::mpsc::unbounded_channel();
-                let task_ctx = ToolContext::new(selected, store, sink).with_python_runner(runner);
+                let mut task_ctx =
+                    ToolContext::new(selected, store, sink).with_python_runner(runner);
+                if let Some(pool) = pool {
+                    task_ctx = task_ctx.with_worker_pool(pool);
+                }
                 score_pair(
                     i,
                     pair,

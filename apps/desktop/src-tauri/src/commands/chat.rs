@@ -46,7 +46,9 @@ pub async fn chat_preview_send(
         .ok_or_else(|| "inference server not running — call start_inference_server first".to_string())?;
     state.inference.mark_used().await;
 
-    // Build a minimal ToolContext so we can reuse the retrieve() helper.
+    // Build a minimal ToolContext so we can reuse the retrieve() helper. The worker
+    // pool matters here more than anywhere: this is the zero-API Local Chat path,
+    // and the warm BGE child is what keeps click-to-first-token inside the budget.
     let (sink, _drain) = mpsc::unbounded_channel();
     let ctx = ToolContext::new(
         state.selected_project.clone(),
@@ -54,7 +56,8 @@ pub async fn chat_preview_send(
         sink,
     )
     .with_python_runner(state.python_runner.clone())
-    .with_inference(state.inference.clone());
+    .with_inference(state.inference.clone())
+    .with_worker_pool(state.worker_pool.clone());
 
     // Local Chat reads the project's persisted retrieval mode — same defaults
     // the agent tools use. No per-call override here; if the user wants to A/B

@@ -202,7 +202,11 @@ pub async fn call_worker(runner: &PythonRunner, cmd: &WorkerCommand) -> Result<V
     outcome
 }
 
-fn build_command(runner: &PythonRunner, module: &str) -> Command {
+/// Shared between the one-shot path here and the long-lived `WorkerPool`
+/// (`crate::worker_pool`) — both spawn `<program> <leading_args> -m <module>`
+/// with identical stdio piping and env merging, so the spawn recipe must live
+/// in exactly one place.
+pub(crate) fn build_command(runner: &PythonRunner, module: &str) -> Command {
     let mut cmd = Command::new(&runner.program);
     cmd.args(&runner.leading_args)
         .arg("-m")

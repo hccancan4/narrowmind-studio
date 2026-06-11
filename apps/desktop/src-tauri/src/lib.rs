@@ -138,6 +138,22 @@ pub fn run() {
             commands::chat::chat_preview_context,
             commands::chat::chat_preview_bootstrap,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // Deterministic cleanup on app exit: reap pooled Python workers and
+            // the llama.cpp server so nothing outlives the window. kill_on_drop
+            // is the backstop; this is the explicit, graceful path (stdin EOF →
+            // clean Python exit → no orphan python.exe in Task Manager).
+            if let tauri::RunEvent::Exit = event {
+                use tauri::Manager as _;
+                let state: tauri::State<'_, AppState> = app_handle.state();
+                let pool = state.worker_pool.clone();
+                let inference = state.inference.clone();
+                tauri::async_runtime::block_on(async move {
+                    pool.shutdown().await;
+                    inference.stop().await;
+                });
+            }
+        });
 }

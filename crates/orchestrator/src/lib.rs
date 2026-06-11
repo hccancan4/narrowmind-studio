@@ -12,6 +12,7 @@ pub mod project;
 pub mod secrets;
 pub mod tools;
 pub mod worker;
+pub mod worker_pool;
 
 pub use agent_bridge::{default_registry, OrchestratorDispatcher};
 pub use app_paths::{app_data_root, hf_cache_dir, hf_cache_env, AppPathError};
@@ -31,6 +32,7 @@ pub use tools::{
     ToolEvent, ToolRegistry, ToolResult,
 };
 pub use worker::{PythonRunner, WorkerCommand};
+pub use worker_pool::{PooledWorkerStatus, WorkerPool};
 
 /// Crate version string, surfaced through Tauri so the UI can report build info.
 #[must_use]

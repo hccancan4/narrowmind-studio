@@ -76,3 +76,38 @@ def test_handler_raising_unexpected_returns_internal_error() -> None:
     responses = _run([json.dumps(request)], registry)
     assert responses[0]["error"]["code"] == error_codes.INTERNAL_ERROR
     assert "oops" in responses[0]["error"]["message"]
+
+
+# ---------------------------------------------------------------------------
+# Long-lived serving contract (Rust WorkerPool reuses one child for many calls)
+# ---------------------------------------------------------------------------
+
+
+def test_multiple_requests_on_one_stream_respond_in_order() -> None:
+    """The Rust WorkerPool keeps the child alive and pipes many requests down
+    one stdin. The server must answer each in order with the matching id —
+    a regression here silently cross-wires responses between callers."""
+    requests = [
+        {"jsonrpc": "2.0", "id": 10, "method": "hello", "params": {"name": "first"}},
+        {"jsonrpc": "2.0", "id": 11, "method": "hello", "params": {"name": "second"}},
+        {"jsonrpc": "2.0", "id": 12, "method": "hello", "params": {"name": "third"}},
+    ]
+    responses = _run([json.dumps(r) for r in requests], _hello_registry())
+    assert [r["id"] for r in responses] == [10, 11, 12]
+    assert [r["result"]["message"] for r in responses] == [
+        "hello, first",
+        "hello, second",
+        "hello, third",
+    ]
+
+
+def test_second_request_with_multibyte_utf8_survives_reuse() -> None:
+    """Phase 3's cp1252 incident was caught on a fresh process; under reuse the
+    encoding state must hold for EVERY subsequent frame too (em dash, Turkish
+    chars, CJK)."""
+    requests = [
+        {"jsonrpc": "2.0", "id": 1, "method": "hello", "params": {"name": "plain"}},
+        {"jsonrpc": "2.0", "id": 2, "method": "hello", "params": {"name": "Übermensch — 形存則神存"}},
+    ]
+    responses = _run([json.dumps(r, ensure_ascii=False) for r in requests], _hello_registry())
+    assert responses[1]["result"]["message"] == "hello, Übermensch — 形存則神存"

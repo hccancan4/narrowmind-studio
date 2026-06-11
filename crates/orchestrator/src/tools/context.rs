@@ -16,6 +16,7 @@ use tokio::sync::{mpsc::UnboundedSender, Mutex};
 use crate::inference::InferenceManager;
 use crate::project::ProjectStore;
 use crate::worker::PythonRunner;
+use crate::worker_pool::WorkerPool;
 
 /// Identifies which project a tool call belongs to. Cheap to clone.
 #[derive(Debug, Clone)]
@@ -70,6 +71,11 @@ pub struct ToolContext {
     /// Long-lived llama.cpp inference server manager. Set at app startup; `None` only in
     /// unit tests. Used by `start_inference_server` / `stop_inference_server` / `rag_chat`.
     pub inference: Option<Arc<InferenceManager>>,
+    /// Long-lived worker pool for fast repeated queries (`rag.query`). One persistent
+    /// Python child per module, so the BGE-small model loads once instead of per call.
+    /// Batch tools (ingestion, embed, downloads) deliberately stay on the one-shot
+    /// `call_worker` path — see `crate::worker_pool` docs for the split rationale.
+    pub worker_pool: Option<Arc<WorkerPool>>,
 }
 
 impl ToolContext {
@@ -85,6 +91,7 @@ impl ToolContext {
             events,
             python_runner: None,
             inference: None,
+            worker_pool: None,
         }
     }
 
@@ -99,6 +106,14 @@ impl ToolContext {
     #[must_use]
     pub fn with_inference(mut self, manager: Arc<InferenceManager>) -> Self {
         self.inference = Some(manager);
+        self
+    }
+
+    /// Attach the shared `WorkerPool` so latency-critical retrieval (`rag.query`)
+    /// reuses a warm Python child instead of spawning per call.
+    #[must_use]
+    pub fn with_worker_pool(mut self, pool: Arc<WorkerPool>) -> Self {
+        self.worker_pool = Some(pool);
         self
     }
 

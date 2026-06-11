@@ -360,6 +360,12 @@ impl Tool for OpenChatPreview {
 /// `rag_cfg` carries the retrieval mode + RRF parameters. Callers that want the
 /// project's persisted defaults pass the project's `cfg.rag` straight through;
 /// the agent-tool `mode` arg overrides the persisted default when present.
+///
+/// Routing: prefers the long-lived [`WorkerPool`](crate::worker_pool::WorkerPool)
+/// (warm BGE-small — retrieval in tens of ms instead of a ~5-8 s cold spawn per
+/// call), falling back to the one-shot `call_worker` when no pool is configured
+/// (older tests, headless tools). The first pooled call still pays the cold
+/// start, so the timeout stays at the one-shot ceiling.
 pub async fn retrieve(
     ctx: &ToolContext,
     project_root: &std::path::Path,
@@ -368,14 +374,6 @@ pub async fn retrieve(
     source_filter: Option<&str>,
     rag_cfg: &crate::project::RagConfig,
 ) -> Result<Vec<RetrievedChunk>, ToolError> {
-    let runner = ctx
-        .python_runner
-        .as_ref()
-        .ok_or_else(|| ToolError::Exec {
-            tool: "rag.query".into(),
-            message: "PythonRunner not configured on ToolContext".into(),
-        })?
-        .clone();
     let params = json!({
         "project_root": project_root,
         "query": query,
@@ -392,10 +390,25 @@ pub async fn retrieve(
         params,
         timeout: Some(Duration::from_secs(RAG_QUERY_TIMEOUT_SECS)),
     };
-    let value = call_worker(&runner, &cmd).await.map_err(|e| ToolError::Exec {
+
+    let value = if let Some(pool) = ctx.worker_pool.as_ref() {
+        pool.call(&cmd).await
+    } else {
+        let runner = ctx
+            .python_runner
+            .as_ref()
+            .ok_or_else(|| ToolError::Exec {
+                tool: "rag.query".into(),
+                message: "neither WorkerPool nor PythonRunner configured on ToolContext".into(),
+            })?
+            .clone();
+        call_worker(&runner, &cmd).await
+    }
+    .map_err(|e| ToolError::Exec {
         tool: "rag.query".into(),
         message: e.to_string(),
     })?;
+
     let hits_value = value.get("hits").cloned().unwrap_or(Value::Array(vec![]));
     let hits: Vec<RetrievedChunk> =
         serde_json::from_value(hits_value).map_err(|e| ToolError::Exec {

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use narrowmind_agent::Message;
 use narrowmind_orchestrator::{
     default_registry, hf_cache_env, new_selected_project, InferenceManager, ProjectStore,
-    PythonRunner, SelectedProject, ToolRegistry,
+    PythonRunner, SelectedProject, ToolRegistry, WorkerPool,
 };
 use tokio::sync::Mutex;
 
@@ -27,6 +27,11 @@ pub struct AppState {
     pub conversation: Mutex<Vec<Message>>,
     pub python_runner: Arc<PythonRunner>,
     pub inference: Arc<InferenceManager>,
+    /// Long-lived Python worker pool (one warm child per worker module). Keeps
+    /// BGE-small resident across rag.query calls so Local Chat retrieval is
+    /// tens of ms instead of a per-call ~5-8 s cold spawn. Shut down on
+    /// `RunEvent::Exit` in lib.rs so no python.exe outlives the app.
+    pub worker_pool: Arc<WorkerPool>,
 }
 
 impl AppState {
@@ -43,13 +48,18 @@ impl AppState {
         // tokio::spawn under the hood. The watchdog is started from the Tauri .setup()
         // hook in lib.rs::run() once the runtime is available.
         let inference = Arc::new(InferenceManager::new());
+        let python_runner = Arc::new(runner);
+        // WorkerPool::new spawns nothing (lazy) — safe before the Tauri runtime
+        // exists, unlike the watchdog above.
+        let worker_pool = Arc::new(WorkerPool::new(python_runner.clone()));
         Self {
             project_store,
             tool_registry: registry,
             selected_project: new_selected_project(None),
             conversation: Mutex::new(Vec::new()),
-            python_runner: Arc::new(runner),
+            python_runner,
             inference,
+            worker_pool,
         }
     }
 }
