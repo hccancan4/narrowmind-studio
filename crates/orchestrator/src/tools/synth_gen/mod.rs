@@ -527,22 +527,10 @@ fn write_jsonl(path: &std::path::Path, pairs: &[QaPair]) -> Result<(), ToolError
     Ok(())
 }
 
-fn log_to_agent_log(project_root: &std::path::Path, msg: &str) {
-    let path = project_root.join("agent.log");
-    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&path) {
-        let line = format!(
-            "[{}] {msg}\n",
-            chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ")
-        );
-        let _ = f.write_all(line.as_bytes());
-    }
-}
-
-fn emit_progress(events: &super::context::ToolEventSink, message: &str) {
-    let _ = events.send(ToolEvent::Progress {
-        message: message.to_string(),
-    });
-}
+// Audit-log + progress helpers moved to `super::util` once run_command became
+// the second consumer (Phase 4 pre-work). Re-imported here to keep call sites
+// unchanged.
+use super::util::{emit_progress, log_to_agent_log};
 
 fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {

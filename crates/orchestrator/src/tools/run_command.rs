@@ -55,7 +55,11 @@ impl Tool for RunCommand {
         ToolDef {
             name: "run_command".into(),
             description: "Run a process inside the current project's directory. The working \
-                          directory is pinned to the project root — there is no `cwd` argument. \
+                          directory is pinned to the project root — there is no `cwd` argument — \
+                          but the executable itself is NOT restricted: absolute paths and \
+                          anything on PATH are allowed (the agent legitimately runs python, uv, \
+                          git, training scripts). UNC (\\\\server\\share) commands are rejected. \
+                          Every invocation is recorded in the project's agent.log audit trail. \
                           stdout and stderr stream to the UI live (one event per line). The \
                           final result includes a summary of output plus a structured exit_code \
                           field. Default timeout is 600s; override with `timeout_secs`. No shell \
@@ -84,12 +88,34 @@ impl Tool for RunCommand {
             .timeout_secs
             .unwrap_or(timeouts::RUN_COMMAND_DEFAULT.as_secs());
 
+        // UNC rejection: a \\server\share executable is the quietest possible
+        // data-exfil / remote-binary route and has no legitimate use in any
+        // current phase (training scripts are local python/uv invocations).
+        // Everything else is intentionally allowed — see the trust-model note
+        // in docs/ARCHITECTURE.md: this tool's sandbox is spatial-by-convention,
+        // not a security boundary.
+        if args.command.starts_with("\\\\") || args.command.starts_with("//") {
+            return Err(ToolError::BadInput {
+                tool: "run_command".into(),
+                reason: format!(
+                    "UNC / network-path executables are not allowed: `{}`",
+                    args.command
+                ),
+            });
+        }
+
         info!(
             command = %args.command,
             args = ?args.args,
             cwd = %project.root.display(),
             timeout_secs = deadline_secs,
             "run_command spawn",
+        );
+        // Durable audit trail: agent.log survives app restarts and answers
+        // "what did the agent actually execute in this project".
+        super::util::log_to_agent_log(
+            &project.root,
+            &format!("run_command: {} {}", args.command, args.args.join(" ")),
         );
 
         let mut cmd = Command::new(&args.command);
@@ -263,6 +289,48 @@ mod tests {
         };
         let selected = new_selected_project(Some(scope));
         (ToolContext::new(selected, store, tx), rx)
+    }
+
+    #[tokio::test]
+    async fn unc_command_is_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("demo");
+        std::fs::create_dir_all(&root).unwrap();
+        let (ctx, _rx) = ctx(root.clone());
+
+        for unc in ["\\\\server\\share\\evil.exe", "//server/share/evil"] {
+            let err = RunCommand
+                .invoke(&ctx, json!({ "command": unc }))
+                .await
+                .expect_err("UNC command must be rejected");
+            assert!(
+                matches!(err, ToolError::BadInput { .. }),
+                "expected BadInput for `{unc}`, got: {err}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn invocation_is_audit_logged() {
+        if !python_available() {
+            eprintln!("skipping: python not on PATH");
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("demo");
+        std::fs::create_dir_all(&root).unwrap();
+        let (ctx, _rx) = ctx(root.clone());
+
+        RunCommand
+            .invoke(&ctx, json!({ "command": "python", "args": ["-c", "pass"] }))
+            .await
+            .unwrap();
+
+        let log = std::fs::read_to_string(root.join("agent.log")).expect("agent.log written");
+        assert!(
+            log.contains("run_command: python -c pass"),
+            "audit line missing from agent.log: {log}"
+        );
     }
 
     #[tokio::test]

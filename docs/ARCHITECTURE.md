@@ -175,7 +175,7 @@ The user picks the provider in Settings and supplies their own API key (stored i
 
 | Category | Tools |
 |---|---|
-| Files | `read_file`, `write_file`, `list_dir`, `run_command` (sandboxed to project dir) |
+| Files | `read_file`, `write_file`, `list_dir`, `run_command` (see trust model below) |
 | Project | `project_status`, `create_project`, `update_project`, `list_projects` |
 | Data | `ingest_source`, `list_chunks`, `filter_chunks`, `build_dataset`, `generate_sft` |
 | Train | `start_training`, `stop_training`, `list_runs`, `select_checkpoint` |
@@ -183,6 +183,20 @@ The user picks the provider in Settings and supplies their own API key (stored i
 | Inference | `start_inference_server`, `chat`, `rag_chat` |
 | Eval | `run_eval`, `compare_models`, `rate_response`, `export_eval_report` |
 | Export | `export_gguf`, `export_modelfile`, `register_with_ollama` |
+
+**`run_command` trust model.** The file tools (`read_file` / `write_file` /
+`list_dir`) enforce a strict path sandbox (`sandbox::resolve_within` rejects
+absolute paths, `..`, drive prefixes). `run_command` deliberately does NOT:
+its working directory is pinned to the project root, but the executable
+itself is unrestricted — the agent legitimately runs `python`, `uv`, `git`,
+and training scripts, and an executable allowlist is infeasible. This
+sandbox is **spatial by convention, not a security boundary**: it trusts the
+local user and the model acting on their behalf. Compensating controls:
+every invocation is appended to the project's `agent.log` audit trail, UNC
+(`\\server\share`) executables are rejected outright, and no shell is ever
+invoked (argv passes through verbatim — no quoting/injection surface).
+Real containment (Windows Job Objects, per-executable confirmation) is a
+Phase 7 pre-OSS decision; see `docs/audit-pre-phase4.md` § 1b.
 
 ### 4. Python Workers (`workers/py`)
 
