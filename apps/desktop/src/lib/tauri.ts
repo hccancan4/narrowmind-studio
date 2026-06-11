@@ -138,6 +138,46 @@ export type ChatHit = {
   _distance?: number;
 };
 
+// ---------------------------------------------------------------------------
+// Training (Phase 4)
+// ---------------------------------------------------------------------------
+
+export type TrainingStatus = {
+  active: boolean;
+  run_id: string | null;
+  project: string | null;
+  step: number;
+  total_steps: number;
+  epoch: number;
+};
+
+export type TrainingRun = {
+  run_id: string;
+  status: "running" | "completed" | "failed" | "cancelled" | string;
+  base_model?: string;
+  started_at?: string;
+  finished_at?: string;
+  step?: number;
+  total_steps?: number;
+  epoch?: number;
+  best_eval_loss?: number | null;
+  error?: string;
+  message?: string;
+};
+
+export const training = {
+  status: () => invoke<TrainingStatus>("training_status"),
+  runs: () => invoke<{ runs: TrainingRun[] }>("training_runs"),
+  metrics: (runId: string) =>
+    invoke<{ run_id: string; metrics: import("./events").TrainingMetric[] }>(
+      "training_metrics",
+      { runId },
+    ),
+  logTail: (runId: string, lines = 50) =>
+    invoke<{ run_id: string; lines: string[] }>("training_log_tail", { runId, lines }),
+  stop: () => invoke<boolean>("training_stop"),
+};
+
 export const chat = {
   context: () => invoke<ChatPreviewContext>("chat_preview_context"),
   /**

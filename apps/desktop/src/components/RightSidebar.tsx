@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { DatasetBrowser } from "./DatasetBrowser";
+import { TrainingMonitor } from "./TrainingMonitor";
 
 type Tab = "dataset" | "training" | "eval";
 
@@ -29,18 +30,7 @@ export function RightSidebar() {
       </nav>
       <div className="tab-body">
         {tab === "dataset" && <DatasetBrowser />}
-        {tab === "training" && (
-          <>
-            <h3>Training</h3>
-            <p className="muted">Live training metrics arrive in Phase 4 per docs/ROADMAP.md.</p>
-            <ul className="mock-list">
-              <li>live loss / lr / grad-norm chart</li>
-              <li>checkpoint list with "best" marker</li>
-              <li>GPU mem watch + ETA</li>
-              <li>log tail</li>
-            </ul>
-          </>
-        )}
+        {tab === "training" && <TrainingMonitor />}
         {tab === "eval" && (
           <>
             <h3>Eval</h3>

@@ -52,3 +52,29 @@ export function onAgentEvent(handler: (e: AgentEvent) => void): Promise<Unlisten
 export function onToolEvent(handler: (e: ToolEvent) => void): Promise<UnlistenFn> {
   return listen<ToolEvent>("agent:tool", (e) => handler(e.payload));
 }
+
+// --- Training (Phase 4) -----------------------------------------------------
+
+/** One metrics.jsonl record / one live training.metric notification. */
+export type TrainingMetric = {
+  step: number;
+  total_steps: number;
+  epoch: number;
+  loss: number | null;
+  eval_loss?: number | null;
+  lr: number | null;
+  grad_norm: number | null;
+  gpu_mem_mb: number;
+  eta_secs: number;
+  ts?: string;
+};
+
+export type TrainingEvent =
+  | { kind: "stage"; run_id: string; data: Record<string, unknown> }
+  | { kind: "metric"; run_id: string; data: TrainingMetric }
+  | { kind: "adapter_answer"; run_id: string; data: Record<string, unknown> }
+  | { kind: "finished"; run_id: string; status: string; message: string };
+
+export function onTrainingEvent(handler: (e: TrainingEvent) => void): Promise<UnlistenFn> {
+  return listen<TrainingEvent>("training:event", (e) => handler(e.payload));
+}

@@ -637,6 +637,73 @@ textarea:focus {
   border-color: var(--border);
 }
 
+/* Training Monitor (Phase 4) */
+
+.training-monitor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  height: 100%;
+  min-height: 0;
+}
+.tm-toolbar {
+  display: flex;
+  gap: 0.4rem;
+}
+.tm-toolbar select {
+  flex: 1;
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+}
+.tm-stats {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  flex-wrap: wrap;
+}
+.tm-status-running { background: rgba(108, 182, 255, 0.16); color: var(--accent); }
+.tm-status-completed { background: rgba(134, 194, 112, 0.16); color: var(--good); }
+.tm-status-failed { background: rgba(239, 107, 107, 0.16); color: var(--danger); }
+.tm-status-cancelled { background: rgba(233, 196, 106, 0.16); color: #e9c46a; }
+.tm-chart {
+  background: #0c0c10;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.4rem 0.3rem 0.1rem;
+}
+.tm-legend {
+  font-size: 0.65rem;
+  padding: 0.1rem 0.4rem 0.25rem;
+}
+.tm-waiting {
+  font-size: 0.78rem;
+  padding: 0.8rem 0.4rem;
+}
+.tm-empty {
+  font-size: 0.8rem;
+  padding: 1rem 0.4rem;
+  line-height: 1.5;
+}
+.tm-log {
+  flex: 1;
+  min-height: 4rem;
+  max-height: 12rem;
+  overflow-y: auto;
+  background: #0c0c10;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.4rem 0.55rem;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 0.68rem;
+  line-height: 1.45;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 /* Modal */
 
 .modal-backdrop {

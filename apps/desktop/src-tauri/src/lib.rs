@@ -157,6 +157,12 @@ pub fn run() {
             commands::chat::chat_preview_send,
             commands::chat::chat_preview_context,
             commands::chat::chat_preview_bootstrap,
+            // training monitor
+            commands::training::training_status,
+            commands::training::training_runs,
+            commands::training::training_metrics,
+            commands::training::training_log_tail,
+            commands::training::training_stop,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
