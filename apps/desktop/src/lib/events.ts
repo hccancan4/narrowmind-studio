@@ -78,3 +78,15 @@ export type TrainingEvent =
 export function onTrainingEvent(handler: (e: TrainingEvent) => void): Promise<UnlistenFn> {
   return listen<TrainingEvent>("training:event", (e) => handler(e.payload));
 }
+
+/** Orphaned run from a dead app session (startup scan). User confirms a kill. */
+export type OrphanRun = {
+  project: string;
+  run_id: string;
+  pid: number | null;
+  pid_alive: boolean;
+};
+
+export function onTrainingOrphan(handler: (e: OrphanRun) => void): Promise<UnlistenFn> {
+  return listen<OrphanRun>("training:orphan", (e) => handler(e.payload));
+}

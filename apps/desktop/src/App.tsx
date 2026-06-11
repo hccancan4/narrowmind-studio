@@ -6,9 +6,9 @@ import { ProjectRail } from "./components/ProjectRail";
 import { RightSidebar } from "./components/RightSidebar";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { TerminalPane, type TerminalHandle } from "./components/TerminalPane";
-import { onAgentEvent, onToolEvent, type TokenUsage } from "./lib/events";
+import { onAgentEvent, onToolEvent, onTrainingOrphan, type TokenUsage } from "./lib/events";
 import { estimateUsd, formatTokens, formatUsd } from "./lib/pricing";
-import { agent, chat, settings } from "./lib/tauri";
+import { agent, chat, settings, training } from "./lib/tauri";
 
 export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -44,6 +44,28 @@ export function App() {
         input_tokens: prev.input_tokens + input_tokens,
         output_tokens: prev.output_tokens + output_tokens,
       }));
+    });
+    return () => {
+      u.then((un) => un()).catch(() => {});
+    };
+  }, []);
+
+  // Orphan training processes from a dead app session (M5): the startup scan
+  // emits one event per live orphan; the user confirms before anything dies.
+  useEffect(() => {
+    const u = onTrainingOrphan(async (o) => {
+      const ok = window.confirm(
+        `Orphan training process detected (project ${o.project}, run ${o.run_id.slice(0, 8)}, WSL pid ${o.pid ?? "?"}) — it may still be using the GPU.\n\nKill it?`,
+      );
+      if (!ok) return;
+      try {
+        await training.killOrphan(o.project, o.run_id, o.pid);
+        termRef.current?.writeError(
+          `orphan training process (pid ${o.pid ?? "?"}) killed; run ${o.run_id.slice(0, 8)} marked failed`,
+        );
+      } catch (e) {
+        termRef.current?.writeError(`orphan kill failed: ${e}`);
+      }
     });
     return () => {
       u.then((un) => un()).catch(() => {});

@@ -128,6 +128,20 @@ pub fn run() {
                     }
                 }
             });
+
+            // Orphan scan (M5 / KARAR 6): a previous app session may have died
+            // mid-training. Dead pids are patched to failed in place; live
+            // WSL-side processes are surfaced to the user for a confirmed kill
+            // — never killed silently, never re-attached (v1).
+            let projects_root = state.project_store.root().to_path_buf();
+            let app_for_orphans = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let orphans =
+                    narrowmind_orchestrator::training::scan_orphans(&projects_root).await;
+                for orphan in orphans {
+                    let _ = app_for_orphans.emit("training:orphan", &orphan);
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -163,6 +177,7 @@ pub fn run() {
             commands::training::training_metrics,
             commands::training::training_log_tail,
             commands::training::training_stop,
+            commands::training::training_kill_orphan,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

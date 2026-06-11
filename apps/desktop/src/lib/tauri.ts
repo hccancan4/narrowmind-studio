@@ -176,6 +176,8 @@ export const training = {
   logTail: (runId: string, lines = 50) =>
     invoke<{ run_id: string; lines: string[] }>("training_log_tail", { runId, lines }),
   stop: () => invoke<boolean>("training_stop"),
+  killOrphan: (project: string, runId: string, pid: number | null) =>
+    invoke<boolean>("training_kill_orphan", { project, runId, pid }),
 };
 
 export const chat = {

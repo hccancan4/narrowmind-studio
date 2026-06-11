@@ -98,3 +98,23 @@ pub async fn training_log_tail(
 pub async fn training_stop(state: State<'_, AppState>) -> Result<bool, String> {
     Ok(state.training.stop().await)
 }
+
+/// Kill a user-confirmed orphan training process (M5 / KARAR 6: detection +
+/// confirmed kill only, no re-attach in v1). The orphan list arrives via the
+/// "training:orphan" event emitted from the startup scan in lib.rs.
+#[tauri::command]
+pub async fn training_kill_orphan(
+    state: State<'_, AppState>,
+    project: String,
+    run_id: String,
+    pid: Option<u32>,
+) -> Result<bool, String> {
+    let orphan = narrowmind_orchestrator::OrphanRun {
+        project,
+        run_id,
+        pid,
+        pid_alive: true,
+    };
+    let projects_root = state.project_store.root().to_path_buf();
+    Ok(narrowmind_orchestrator::training::kill_orphan(&projects_root, &orphan).await)
+}

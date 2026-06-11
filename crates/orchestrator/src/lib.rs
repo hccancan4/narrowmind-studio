@@ -36,7 +36,7 @@ pub use tools::{
     ToolEvent, ToolRegistry, ToolResult,
 };
 pub use retry::{with_backoff, BackoffPolicy, Retry};
-pub use training::{TrainingEvent, TrainingManager, TrainingStatus};
+pub use training::{OrphanRun, TrainingEvent, TrainingManager, TrainingStatus};
 pub use worker::{call_worker_streaming, PythonRunner, WorkerCommand};
 pub use worker_pool::{PooledWorkerStatus, WorkerPool};
 

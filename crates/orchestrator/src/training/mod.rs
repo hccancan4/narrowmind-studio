@@ -351,6 +351,89 @@ impl TrainingManager {
     }
 }
 
+/// One orphaned training process found by [`scan_orphans`]: a run whose
+/// status.json says "running" but whose owning app died. If `pid_alive`,
+/// a WSL-side process may still be burning GPU — the UI asks the user
+/// before killing (KARAR 6: detection + confirmed kill, no re-attach).
+#[derive(Debug, Clone, Serialize)]
+pub struct OrphanRun {
+    pub project: String,
+    pub run_id: String,
+    pub pid: Option<u32>,
+    pub pid_alive: bool,
+}
+
+/// Scan every project's runs/ for status=="running" leftovers from a dead
+/// app session. Dead-pid runs are patched to failed immediately; live-pid
+/// runs are returned for a user-confirmed kill. Called once at app startup.
+pub async fn scan_orphans(projects_root: &std::path::Path) -> Vec<OrphanRun> {
+    let mut orphans = Vec::new();
+    let Ok(projects) = std::fs::read_dir(projects_root) else {
+        return orphans;
+    };
+    for project in projects.flatten().filter(|e| e.path().is_dir()) {
+        let project_name = project.file_name().to_string_lossy().into_owned();
+        let runs_dir = project.path().join("runs");
+        let Ok(runs) = std::fs::read_dir(&runs_dir) else {
+            continue;
+        };
+        for run in runs.flatten().filter(|e| e.path().is_dir()) {
+            let run_id = run.file_name().to_string_lossy().into_owned();
+            let status_path = run.path().join("status.json");
+            let Some(status) = std::fs::read_to_string(&status_path)
+                .ok()
+                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            else {
+                continue;
+            };
+            if status.get("status").and_then(Value::as_str) != Some("running") {
+                continue;
+            }
+            let pid = std::fs::read_to_string(run.path().join("worker.pid"))
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok());
+            let pid_alive = match pid {
+                Some(p) => wsl::wsl_pid_alive(p).await,
+                None => false,
+            };
+            if pid_alive {
+                warn!(project = %project_name, run_id = %run_id, ?pid, "orphan training process detected");
+                orphans.push(OrphanRun {
+                    project: project_name.clone(),
+                    run_id,
+                    pid,
+                    pid_alive,
+                });
+            } else {
+                // Process is gone — the run can never finish. Record the truth.
+                patch_status_file(
+                    &project.path(),
+                    &run_id,
+                    "failed",
+                    "app terminated while the run was active (orphan cleanup at next start)",
+                );
+                info!(project = %project_name, run_id = %run_id, "stale running status patched to failed");
+            }
+        }
+    }
+    orphans
+}
+
+/// Kill a confirmed orphan (UI dialog accepted) and patch its run record.
+pub async fn kill_orphan(projects_root: &std::path::Path, orphan: &OrphanRun) -> bool {
+    let killed = match orphan.pid {
+        Some(pid) => wsl::wsl_kill(pid).await,
+        None => false,
+    };
+    patch_status_file(
+        &projects_root.join(&orphan.project),
+        &orphan.run_id,
+        "failed",
+        "orphan training process killed on user confirmation",
+    );
+    killed
+}
+
 /// Merge a terminal status into runs/<id>/status.json without clobbering the
 /// worker-written fields (mirrors the Python write_status merge semantics).
 fn patch_status_file(project_root: &std::path::Path, run_id: &str, status: &str, message: &str) {
