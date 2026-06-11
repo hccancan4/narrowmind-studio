@@ -13,7 +13,7 @@ dependencies = [
     "python-docx>=1.1",      # DOCX extraction
     "trafilatura>=1.12",     # web boilerplate removal + extraction
     "wikipedia-api>=0.7",    # Wikipedia category scrape
-    "datasets>=3.0",         # HuggingFace datasets (streaming default)
+    "datasets>=3.0,<5",      # HuggingFace datasets (streaming default); bounded — streaming API drifts
     "beautifulsoup4>=4.12",  # HTML helper for fixtures and fallback parsing
     # Cleaning (Phase 2)
     "datasketch>=1.6",          # MinHash near-duplicate detection
@@ -23,10 +23,17 @@ dependencies = [
     "tokenizers>=0.20",      # rust-backed XLM-RoBERTa tokenizer, no torch needed
     "tiktoken>=0.8",         # cl100k_base for chunk-size estimation, offline (no HF download)
     # Phase 3 — RAG (embedding + vector store)
-    "torch>=2.2",                  # CPU-only via [tool.uv.sources] below
-    "sentence-transformers>=3.0",  # BGE-small embedder, lazy-loaded on first build_dataset
-    "lancedb>=0.13",               # embedded vector store, file-backed (no service)
-    "pyarrow>=17.0",               # lancedb dep; pinned so resolver doesn't pick incompatible
+    #
+    # ML-core deps carry UPPER bounds since the lancedb 0.30 incident: list_tables()
+    # silently changed return shape between minors and every vector-store upsert lost
+    # its rows while unit tests stayed green (docs/testing.md § library pinning).
+    # The ranges define a deliberate upgrade window; widening one requires running
+    # tests/test_contract_probes.py, which pins the exact behavioral contracts we
+    # depend on (return shapes, embedding dims, score fields).
+    "torch>=2.2,<3",                  # CPU-only via [tool.uv.sources] below
+    "sentence-transformers>=3.0,<6",  # BGE-small embedder, lazy-loaded on first build_dataset
+    "lancedb>=0.30,<0.40",            # embedded vector store; 0.30 = ListTablesResponse API era
+    "pyarrow>=17.0,<25",              # lancedb dep; bounded so resolver can't pick incompatible
     # Phase 3 — inference. llama-cpp-python CUDA 12.5 prebuilt from abetlen's GitHub
     # release attachment (requires system-wide CUDA Toolkit 12.5 — README/dev-setup.md
     # flags this prereq). Pinned to a direct URL because abetlen ships cu125 only as
