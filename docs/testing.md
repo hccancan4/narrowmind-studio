@@ -7,17 +7,27 @@ file is current.
 
 ---
 
-## Current baseline (2026-05-18, post Phase 3.5 retrieval polish)
+## Current baseline (2026-06-11, post architecture-review hardening)
 
 | Runtime | Command | Result |
 |---|---|---|
-| **Rust unit** | `cargo test --workspace --lib` | **62 passed** (0 failed) — 8 in `narrowmind-agent`, 0 in `narrowmind-workers`, 54 in `narrowmind-orchestrator` (+4 `RagConfig` / `RetrievalMode` back-compat tests) |
-| **Rust integration** | `cargo test --workspace --tests` | **+2 passed** in `crates/orchestrator/tests/` (hello round-trip) |
-| **Python** | `uv --directory workers/py run pytest` | **77 passed** (0 failed) — +8 vs prior baseline for FTS, RRF math, hybrid query, FTS-without-index graceful degrade |
+| **Rust unit** | `cargo test --workspace --lib` | **68 passed** (0 failed) — 9 in `narrowmind-agent` (+1 TokenUsage accounting), 0 in `narrowmind-workers`, 59 in `narrowmind-orchestrator` (+5 retry/backoff) |
+| **Rust integration** | `cargo test --workspace --tests` | **+11 passed** — 2 hello round-trip + **9 WorkerPool probes** (process reuse, 8-way concurrent serialization, in-flight timeout-kill-respawn, queued-timeout-spares-worker, external-kill recovery, crash-retry bounds, 1 MB stderr flood, shutdown reaping) |
+| **Python** | `uv --directory workers/py run pytest` | **86 passed** (0 failed) — +7 dependency contract probes, +2 long-lived stream serving (in-order ids, multi-byte UTF-8 under reuse) |
 | **TypeScript** | `pnpm -r typecheck` | **2 workspaces clean** (`apps/desktop`, `packages/sdk-js`) |
 
-Total: **141 tests** across three runtimes. Workspace clean, no warnings,
+Total: **165 tests** across three runtimes. Workspace clean, no warnings,
 no flakes.
+
+### Earlier baseline (2026-05-18, post Phase 3.5 retrieval polish)
+
+| Runtime | Command | Result |
+|---|---|---|
+| Rust unit | `cargo test --workspace --lib` | 62 passed (8 agent + 54 orchestrator) |
+| Rust integration | `cargo test --workspace --tests` | +2 passed |
+| Python | `uv ... pytest` | 77 passed |
+| TypeScript | `pnpm -r typecheck` | 2 workspaces clean |
+| Total | | 141 tests, 0 failed |
 
 ### Earlier baseline (2026-05-17, post Phase 3 + UI polish + synth_provider override)
 

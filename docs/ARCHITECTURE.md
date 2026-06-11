@@ -292,11 +292,43 @@ For users with more VRAM (e.g. RTX 4090 24 GB), presets unlock 13B fine-tuning a
 
 ---
 
+## Worker Process Model (resolved post-3.5)
+
+Originally Open Question #2 ("long-lived per worker type, or spawn-per-task?").
+Resolved as a deliberate **split** — both, scoped by workload:
+
+- **`WorkerPool`** (`crates/orchestrator/src/worker_pool.rs`) — one persistent
+  Python child per worker module, spawned lazily, calls serialized behind a
+  per-worker async mutex. Serves **fast repeated queries**: today that is
+  `rag.query` only. The win: BGE-small loads once per app session instead of
+  once per call (~5-8 s of interpreter + import + model load per retrieval in
+  the old spawn-per-task model — paid by every Local Chat message and ×4
+  during parallel eval). Failure semantics: in-flight timeout kills the child
+  (state unknown, next caller respawns lazily); queued timeout leaves the
+  busy-but-healthy worker untouched; dead children respawn transparently with
+  exactly one retry; stderr is drained continuously into a ring buffer so
+  tracebacks survive and the 64 KB pipe buffer can't deadlock a chatty child.
+  Shut down deterministically on Tauri `RunEvent::Exit` (stdin EOF → grace →
+  tree kill — no orphan `python.exe`).
+- **One-shot `call_worker`** (`crates/orchestrator/src/worker.rs`) — spawn,
+  one request, one response, exit. Serves **long batch jobs**: ingestion
+  (600 s), corpus embed + FTS build (900 s), model downloads (60 min), and
+  the `hello` connectivity probe. Pooling these would head-of-line-block
+  Local Chat retrieval behind multi-minute jobs, and per-job crash isolation
+  is a feature for jobs that parse hostile PDFs.
+
+Phase 4 hook: pooled calls are serialized, so an id-less JSON-RPC frame
+arriving mid-call unambiguously belongs to the in-flight request. Training
+progress streaming therefore needs only a notification callback on the read
+loop (which already skips such frames) — no protocol redesign.
+
+---
+
 ## Open Architecture Questions
 
 To be resolved during Phase 1:
 
 1. **Agent planner location** — should planning happen client-side in the LLM (Claude Code style) or in a lightweight Rust planner? *Lean: LLM-only.*
-2. **Worker process model** — long-lived per worker type, or spawn-per-task? *Lean: long-lived with health checks and restart-on-crash.*
+2. **Worker process model** — ~~long-lived per worker type, or spawn-per-task?~~ **Resolved post-3.5** — see "Worker Process Model" above: pool for fast repeated queries, one-shot for batch jobs.
 3. **IPC type-sharing** — `tauri-specta` for auto-generated TS types from Rust, or hand-written? *Lean: tauri-specta if stable on Tauri v2.*
 4. **Telemetry** — opt-in anonymous run metadata (not data) to power future model-recommendation features. *Default off, document clearly.*
