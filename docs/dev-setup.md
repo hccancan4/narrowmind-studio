@@ -106,6 +106,75 @@ In the orchestrator log during a real inference run, `load_tensors: layer N assi
 
 ---
 
+## Training environment (Phase 4): WSL2 + separate uv project
+
+Phase 4's QLoRA training runs on **Unsloth**, whose wheels mark native
+Windows unsupported (every dependency carries a `sys_platform != 'win32'`
+marker as of unsloth 2026.5.x). The training environment therefore lives in
+**WSL2 Ubuntu**, where NVIDIA's driver passes CUDA through (verify with
+`wsl -e nvidia-smi` — it should list the host GPU).
+
+Two further constraints shaped the layout:
+
+1. **CPU-torch vs CUDA-torch**: the main uv workspace pins torch to the CPU
+   index (BGE-small needs no GPU). A uv workspace shares one lockfile and one
+   `.venv`, so the CUDA build cannot coexist there. `workers/py-training/` is
+   a **standalone uv project** (excluded from the workspace in the root
+   pyproject) with its own lock: torch from the `cu124` index + unsloth +
+   bitsandbytes + trl/peft/accelerate.
+2. **No path-dependency on narrowmind-workers**: a path dep would drag the
+   CPU-torch source pin into the training resolution and conflict. Instead the
+   worker is spawned with `PYTHONPATH=<repo>/workers/py` — sound because the
+   training entry's import graph outside the ML stack is pure stdlib
+   (rpc/server.py, debug.py, training/config.py, training/dataset.py; heavy
+   imports are deferred into handler bodies).
+
+### One-time setup
+
+```bash
+# inside WSL (Ubuntu)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Then from Windows, the initial sync (downloads ~3-5 GB of CUDA wheels):
+
+```powershell
+wsl -e bash -c 'export PATH="$HOME/.local/bin:$PATH" && export UV_PROJECT_ENVIRONMENT="$HOME/.venvs/narrowmind-training" && cd "/mnt/c/<repo>/workers/py-training" && uv sync'
+```
+
+### Why the venv and HF cache live on ext4, not /mnt/c
+
+`run-worker.sh` (the launcher the orchestrator spawns through `wsl.exe -e
+bash ./run-worker.sh ...`) sets:
+
+- `UV_PROJECT_ENVIRONMENT=$HOME/.venvs/narrowmind-training` — importing torch
+  from a venv on the 9p-mounted NTFS costs 30-60 s of file-open round-trips;
+  on ext4 it's ~2 s. The `uv.lock` stays in the repo.
+- `HF_HOME=$HOME/.cache/narrowmind-hf` — memory-mapping a ~5 GB safetensors
+  base model over 9p is brutal. The training base model is therefore cached
+  separately from the Windows-side GGUF cache (one-time disk cost, paid for
+  load speed every run).
+
+Run artifacts (`runs/<id>/metrics.jsonl`, `status.json`, checkpoints, the
+final adapter) DO live on the Windows side under the project directory —
+the Rust orchestrator and the Training Monitor read them natively; epoch-level
+checkpoint writes over 9p are slow but rare (3 per run).
+
+### Verifying the training environment
+
+```powershell
+wsl -e bash "workers/py-training/run-worker.sh" -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+# expected: True NVIDIA GeForce RTX 3070
+```
+
+### Orphan-process note
+
+`worker.pid` written by a training run is a **Linux pid in the WSL
+namespace** — Windows `tasklist` cannot see it. Orphan detection therefore
+probes via `wsl -e kill -0 <pid>` and kills via `wsl -e kill -9 <pid>`.
+
+---
+
 ## Worker stdio is strict UTF-8
 
 The Python workers communicate with the Rust orchestrator over JSON-RPC on stdin/stdout. **Windows defaults `sys.stdout` encoding to the system locale (cp1252)**, not UTF-8. Wikipedia chunks contain em dashes, smart quotes, and accented letters; writing them with `json.dumps(ensure_ascii=False)` against a cp1252 stream produces single-byte values like `0x97` that the Rust `BufReader::read_line` rejects as `stream did not contain valid UTF-8`.

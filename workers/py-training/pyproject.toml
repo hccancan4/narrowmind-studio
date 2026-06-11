@@ -1,0 +1,64 @@
+# NarrowMind Studio — TRAINING environment (Phase 4).
+#
+# This is a STANDALONE uv project, deliberately excluded from the repo's uv
+# workspace (root pyproject.toml `[tool.uv.workspace] exclude`). Reason: the
+# workspace pins torch to the CPU index (BGE-small needs no GPU and the CUDA
+# wheel is ~2.5 GB), while QLoRA training requires CUDA torch — and a uv
+# workspace shares ONE lockfile + ONE .venv, where the two torch sources
+# cannot coexist. Two environments, one source tree:
+#
+#   workers/py           → CPU env  (ingestion, rag, inference download, evals)
+#   workers/py-training  → CUDA env (this file; Unsloth QLoRA)
+#
+# The training worker CODE lives in workers/py/narrowmind_workers/training/.
+# This project is an ENVIRONMENT ONLY: it does NOT path-depend on
+# narrowmind-workers (a path dependency would drag in that project's
+# pinned-to-CPU torch source and conflict — uv resolves a path dep's
+# tool.uv.sources). Instead the orchestrator spawns the worker with
+# PYTHONPATH=<repo>/workers/py, which is sound because the training entry's
+# import graph outside the ML stack is pure stdlib (rpc/server.py, debug.py,
+# training/config.py, training/dataset.py — verified; heavy imports are
+# deferred into handler bodies).
+#
+# Spawned by the orchestrator as:
+#   uv run python -m narrowmind_workers.training
+#   (cwd = workers/py-training, env PYTHONPATH=../py)
+
+[project]
+name = "narrowmind-training"
+version = "0.0.0"
+description = "NarrowMind Studio — CUDA training environment (Unsloth QLoRA)."
+requires-python = ">=3.11,<3.13"  # unsloth/triton-windows support window
+license = { text = "Apache-2.0" }
+authors = [{ name = "Hasancan", email = "hasanhccan@gmail.com" }]
+dependencies = [
+    # Training stack. Unsloth pulls transformers/peft/trl/accelerate/
+    # bitsandbytes/datasets transitively, but the load-bearing ones are pinned
+    # explicitly so a lockfile refresh can't silently jump a major
+    # (docs/testing.md § library pinning).
+    "unsloth>=2025.6",
+    # Floor 2.6: unsloth 2026.x touches torch.int1/sub-byte dtypes that landed
+    # in 2.6 — cu124's 2.5.1 fails at import with AttributeError: int1.
+    "torch>=2.6,<3",                # CUDA via [tool.uv.sources] below
+    "bitsandbytes>=0.45",
+    "transformers>=4.46,<5",
+    "trl>=0.12,<1",
+    "peft>=0.13,<1",
+    "accelerate>=1.0,<2",
+    "datasets>=3.0,<5",
+    # Windows: upstream triton has no win32 wheels; triton-windows is the
+    # Unsloth-documented path.
+    "triton-windows ; sys_platform == 'win32'",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+# Environment project, not a package — nothing to build or publish.
+[tool.uv]
+package = false

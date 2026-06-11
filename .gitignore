@@ -18,6 +18,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
+# Unsloth drops compiled kernels into the spawn cwd (workers/py-training)
+unsloth_compiled_cache/
+
 # Tauri
 apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/target/
