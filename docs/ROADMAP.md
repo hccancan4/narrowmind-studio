@@ -133,6 +133,34 @@ mean ≥ 3.8 on the expanded eval set. On the dogfood project
 
 **Acceptance**: User runs a QLoRA fine-tune of Qwen2.5-7B on the philosophy SFT dataset. Run completes without OOM on RTX 3070 8 GB, produces an adapter, and appears in the Training Monitor with full metrics history.
 
+### Phase 4.5 follow-up — Second Base Model: Gemma 4 12B (~2-3 days)
+
+Gemma 4 12B (released 2026-06-03, official QAT checkpoints 2026-06-05) is
+registered in the base model registry as a non-default entry. Phase 4 ships
+and is accepted on Qwen2.5-7B; Phase 4.5 then answers "does a newer, larger
+QAT base beat our tuned 7B on the same data?" with evidence instead of vibes.
+
+**Scope**:
+- QLoRA fine-tune of Gemma 4 12B on the same SFT dataset used in Phase 4
+  (registry id `gemma-4-12b-it`; QAT-aware GGUF serving via
+  `unsloth/gemma-4-12B-it-qat-GGUF` — see `docs/quantization.md` for why a
+  generic conversion is forbidden)
+- Eval Console comparison: Qwen2.5-7B fine-tune vs Gemma 4 12B fine-tune on
+  the same eval set (judge + recall + manual ratings)
+- VRAM watch: 12B QLoRA sits at 8-10 GB — the RTX 3070's 8 GB is the floor;
+  document OOM behavior and any required gradient-checkpointing/seq-len
+  trade-offs in the run report
+
+**Entry criteria**: Phase 4 accepted + Unsloth Gemma 4 support re-confirmed
+at entry (confirmed as of 2026-06-11: text/vision/audio/RL fine-tuning,
+12B QLoRA on consumer GPUs) + exact bnb-4bit training-variant and GGUF
+filename re-verified against HF.
+
+**Acceptance**: both fine-tunes complete on the reference card, the Eval
+Console comparison report ranks them on the shared eval set, and the registry
+entry's `quantization_notes` (QAT trap, Turkish-eval caveat) are surfaced in
+the run report.
+
 ---
 
 ## Phase 5 — Hybrid + Eval Console (~1 week)

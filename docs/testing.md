@@ -7,17 +7,27 @@ file is current.
 
 ---
 
-## Current baseline (2026-06-11, post architecture-review hardening)
+## Current baseline (2026-06-11 PM, post pre-Phase-4 groundwork)
 
 | Runtime | Command | Result |
 |---|---|---|
-| **Rust unit** | `cargo test --workspace --lib` | **68 passed** (0 failed) — 9 in `narrowmind-agent` (+1 TokenUsage accounting), 0 in `narrowmind-workers`, 59 in `narrowmind-orchestrator` (+5 retry/backoff) |
-| **Rust integration** | `cargo test --workspace --tests` | **+11 passed** — 2 hello round-trip + **9 WorkerPool probes** (process reuse, 8-way concurrent serialization, in-flight timeout-kill-respawn, queued-timeout-spares-worker, external-kill recovery, crash-retry bounds, 1 MB stderr flood, shutdown reaping) |
-| **Python** | `uv --directory workers/py run pytest` | **86 passed** (0 failed) — +7 dependency contract probes, +2 long-lived stream serving (in-order ids, multi-byte UTF-8 under reuse) |
+| **Rust unit** | `cargo test --workspace --lib` | **77 passed** (0 failed) — 9 in `narrowmind-agent`, 0 in `narrowmind-workers`, 68 in `narrowmind-orchestrator` (+9 base-model-registry tests incl. the two behavior-pinning tests and the Gemma QAT-repo guard) |
+| **Rust integration** | `cargo test --workspace --tests` | **+11 passed** — 2 hello round-trip + 9 WorkerPool probes |
+| **Python** | `uv --directory workers/py run pytest` | **86 passed** (0 failed) |
 | **TypeScript** | `pnpm -r typecheck` | **2 workspaces clean** (`apps/desktop`, `packages/sdk-js`) |
 
-Total: **165 tests** across three runtimes. Workspace clean, no warnings,
+Total: **174 tests** across three runtimes. Workspace clean, no warnings,
 no flakes.
+
+### Earlier baseline (2026-06-11 AM, post architecture-review hardening)
+
+| Runtime | Command | Result |
+|---|---|---|
+| Rust unit | `cargo test --workspace --lib` | 68 passed (9 agent + 59 orchestrator) |
+| Rust integration | `cargo test --workspace --tests` | +11 passed (2 hello + 9 WorkerPool) |
+| Python | `uv ... pytest` | 86 passed |
+| TypeScript | `pnpm -r typecheck` | 2 workspaces clean |
+| Total | | 165 tests, 0 failed |
 
 ### Earlier baseline (2026-05-18, post Phase 3.5 retrieval polish)
 
