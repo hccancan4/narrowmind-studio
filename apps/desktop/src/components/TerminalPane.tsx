@@ -3,7 +3,8 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 
-import { onAgentEvent, onToolEvent, type StopReason } from "../lib/events";
+import { onAgentEvent, onToolEvent, type StopReason, type TokenUsage } from "../lib/events";
+import { estimateUsd, formatTokens, formatUsd } from "../lib/pricing";
 
 const ANSI = {
   reset: "\x1b[0m",
@@ -74,6 +75,13 @@ function formatStop(reason: StopReason): string {
   if (typeof reason === "string") return reason;
   if ("error" in reason) return `error: ${reason.error}`;
   return JSON.stringify(reason);
+}
+
+/** " · 1.2k in / 350 out · ~$0.0089" or "" when the provider reported nothing. */
+function formatUsageSuffix(usage: TokenUsage | undefined): string {
+  if (!usage || (usage.input_tokens === 0 && usage.output_tokens === 0)) return "";
+  const tokens = `${formatTokens(usage.input_tokens)} in / ${formatTokens(usage.output_tokens)} out`;
+  return ` · ${tokens} · ~${formatUsd(estimateUsd(usage))}`;
 }
 
 export type TerminalHandle = {
@@ -188,6 +196,11 @@ export function TerminalPane({ onReady }: Props) {
       clear: () => term.clear(),
     });
 
+    // Per-request usage accumulator: every TurnEnd carries only its own
+    // iteration's tokens, so we sum across iterations and print the request
+    // total on the final TurnEnd, then reset for the next user message.
+    let requestUsage = { input_tokens: 0, output_tokens: 0 };
+
     const unlistenAgent = onAgentEvent((ev) => {
       switch (ev.kind) {
         case "assistant_text_delta":
@@ -212,10 +225,17 @@ export function TerminalPane({ onReady }: Props) {
           break;
         }
         case "turn_end": {
+          if (ev.usage) {
+            requestUsage.input_tokens += ev.usage.input_tokens;
+            requestUsage.output_tokens += ev.usage.output_tokens;
+          }
           if (!ev.more_turns) {
             term.writeln("");
-            writeWrapped(`${ANSI.gray}─── turn complete (${formatStop(ev.reason)}) ───${ANSI.reset}`);
+            writeWrapped(
+              `${ANSI.gray}─── turn complete (${formatStop(ev.reason)}${formatUsageSuffix(requestUsage)}) ───${ANSI.reset}`,
+            );
             term.writeln("");
+            requestUsage = { input_tokens: 0, output_tokens: 0 };
           }
           break;
         }

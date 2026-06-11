@@ -4,6 +4,11 @@
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+export type TokenUsage = {
+  input_tokens: number;
+  output_tokens: number;
+};
+
 export type AgentEvent =
   | { kind: "assistant_text_delta"; text: string }
   | { kind: "tool_call_start"; id: string; name: string; input: unknown }
@@ -14,7 +19,8 @@ export type AgentEvent =
       content: string;
       is_error: boolean;
     }
-  | { kind: "turn_end"; reason: StopReason; more_turns: boolean };
+  // `usage` covers one provider iteration only — sum across events for totals.
+  | { kind: "turn_end"; reason: StopReason; more_turns: boolean; usage: TokenUsage };
 
 export type StopReason =
   | "end_turn"

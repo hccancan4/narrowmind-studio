@@ -115,6 +115,14 @@ pub enum ProviderEvent {
     /// Marker emitted by the adapter right after a `ToolCall` to signal the agent loop
     /// should run the tool and feed a `ToolResult` block back before resuming streaming.
     ToolResultRequested,
+    /// Token accounting for this stream. Adapters emit this AT MOST ONCE, with final
+    /// totals for the message, immediately before `Stop` — so consumers can simply sum
+    /// `Usage` events without worrying about cumulative-vs-delta semantics. Adapters
+    /// whose vendor API doesn't report usage just never emit it.
+    Usage {
+        input_tokens: u64,
+        output_tokens: u64,
+    },
     /// Stream terminated. No further events.
     Stop { reason: StopReason },
 }

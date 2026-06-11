@@ -247,6 +247,12 @@ struct StreamState {
     tool_inputs: HashMap<u32, ToolInputBuffer>,
     /// Final stop reason captured from `message_delta`.
     stop_reason: Option<StopReason>,
+    /// Token accounting. `message_start` carries `usage.input_tokens`;
+    /// `message_delta` carries a CUMULATIVE `usage.output_tokens` that we
+    /// overwrite each time so the last value is the message total. Folded
+    /// into a single `ProviderEvent::Usage` right before `Stop`.
+    input_tokens: u64,
+    output_tokens: u64,
 }
 
 #[derive(Debug, Default)]
@@ -280,6 +286,16 @@ async fn pump_sse(response: reqwest::Response, tx: mpsc::UnboundedSender<Provide
 
     // Flush any partially-buffered event left in `buf` after the body closes.
     drain_events(&mut buf, &mut state, &tx);
+
+    // Per the ProviderEvent::Usage contract: at most one Usage event, final
+    // totals, immediately before Stop. Skipped when the stream died before
+    // message_start (both still zero) so consumers never see a bogus 0/0.
+    if state.input_tokens > 0 || state.output_tokens > 0 {
+        let _ = tx.send(ProviderEvent::Usage {
+            input_tokens: state.input_tokens,
+            output_tokens: state.output_tokens,
+        });
+    }
 
     let reason = state.stop_reason.unwrap_or_else(|| {
         StopReason::Error("stream closed without message_stop".into())
@@ -379,7 +395,20 @@ fn dispatch(ev: &ParsedSse, state: &mut StreamState, tx: &mpsc::UnboundedSender<
     debug!(event = ?ev.event, kind, "sse event");
 
     match kind {
-        "message_start" | "ping" | "message_stop" => { /* no-op */ }
+        "ping" | "message_stop" => { /* no-op */ }
+
+        "message_start" => {
+            // The opening frame carries the request's input-token count (and an
+            // initial output count) under message.usage.
+            if let Some(usage) = payload.get("message").and_then(|m| m.get("usage")) {
+                if let Some(n) = usage.get("input_tokens").and_then(Value::as_u64) {
+                    state.input_tokens = n;
+                }
+                if let Some(n) = usage.get("output_tokens").and_then(Value::as_u64) {
+                    state.output_tokens = n;
+                }
+            }
+        }
 
         "content_block_start" => {
             let Some(block) = payload.get("content_block") else { return };
@@ -448,6 +477,15 @@ fn dispatch(ev: &ParsedSse, state: &mut StreamState, tx: &mpsc::UnboundedSender<
                 .and_then(Value::as_str)
             {
                 state.stop_reason = Some(stop_reason_from_wire(reason));
+            }
+            // usage.output_tokens here is cumulative for the message — overwrite,
+            // never add, so the last delta leaves the final total in state.
+            if let Some(n) = payload
+                .get("usage")
+                .and_then(|u| u.get("output_tokens"))
+                .and_then(Value::as_u64)
+            {
+                state.output_tokens = n;
             }
         }
 

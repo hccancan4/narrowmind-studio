@@ -6,7 +6,8 @@ import { ProjectRail } from "./components/ProjectRail";
 import { RightSidebar } from "./components/RightSidebar";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { TerminalPane, type TerminalHandle } from "./components/TerminalPane";
-import { onToolEvent } from "./lib/events";
+import { onAgentEvent, onToolEvent, type TokenUsage } from "./lib/events";
+import { estimateUsd, formatTokens, formatUsd } from "./lib/pricing";
 import { agent, chat, settings } from "./lib/tauri";
 
 export function App() {
@@ -15,6 +16,12 @@ export function App() {
   const [hasKey, setHasKey] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [localChatBusy, setLocalChatBusy] = useState(false);
+  // Cumulative agent-loop API usage for this app session. Local Chat never
+  // moves this counter — that's the whole point of the zero-API path.
+  const [sessionUsage, setSessionUsage] = useState<TokenUsage>({
+    input_tokens: 0,
+    output_tokens: 0,
+  });
   const termRef = useRef<TerminalHandle | null>(null);
 
   const onTerminalReady = useCallback((handle: TerminalHandle) => {
@@ -24,6 +31,24 @@ export function App() {
   useEffect(() => {
     settings.hasProviderKey("anthropic").then(setHasKey).catch(() => setHasKey(false));
   }, [settingsOpen]);
+
+  // Accumulate per-iteration usage from every TurnEnd into the session total
+  // shown in the banner. Each event carries only its own stream's tokens
+  // (AgentEvent contract), so plain addition never double-counts.
+  useEffect(() => {
+    const u = onAgentEvent((ev) => {
+      if (ev.kind !== "turn_end" || !ev.usage) return;
+      const { input_tokens, output_tokens } = ev.usage;
+      if (input_tokens === 0 && output_tokens === 0) return;
+      setSessionUsage((prev) => ({
+        input_tokens: prev.input_tokens + input_tokens,
+        output_tokens: prev.output_tokens + output_tokens,
+      }));
+    });
+    return () => {
+      u.then((un) => un()).catch(() => {});
+    };
+  }, []);
 
   // Listen for ui_action events from the orchestrator: open the chat preview window
   // when an agent tool requests it. The window itself is a separate Tauri WebviewWindow
@@ -133,6 +158,16 @@ export function App() {
             <span className="muted">no project selected</span>
           )}
           <span className="spacer" />
+          {(sessionUsage.input_tokens > 0 || sessionUsage.output_tokens > 0) && (
+            <span
+              className="usage-meter"
+              title={`Agent-loop API usage this session: ${sessionUsage.input_tokens.toLocaleString()} input / ${sessionUsage.output_tokens.toLocaleString()} output tokens. Estimate at Sonnet-class rates — Local Chat costs nothing and is not counted.`}
+            >
+              {formatTokens(sessionUsage.input_tokens)} in /{" "}
+              {formatTokens(sessionUsage.output_tokens)} out · ~
+              {formatUsd(estimateUsd(sessionUsage))}
+            </span>
+          )}
           {selectedProject && (
             <button
               type="button"

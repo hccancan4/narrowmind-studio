@@ -38,6 +38,15 @@ pub enum AgentError {
     LoopLimitExceeded,
 }
 
+/// Token accounting for one provider iteration. Sum across `TurnEnd` events to get a
+/// request or session total — each iteration reports only its own stream's usage, so
+/// plain addition never double-counts.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct TokenUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
 /// Event the agent loop emits as it drives a turn. Each variant maps onto something the UI
 /// will render in the transcript.
 #[derive(Debug, Clone, Serialize)]
@@ -57,7 +66,13 @@ pub enum AgentEvent {
     },
     /// One full assistant turn ended. `reason` is the upstream provider's stop reason.
     /// `more_turns` indicates whether the loop will continue (true after a `tool_use`).
-    TurnEnd { reason: StopReason, more_turns: bool },
+    /// `usage` covers THIS provider iteration only (zeroes when the provider doesn't
+    /// report usage) — UIs sum across events for running totals.
+    TurnEnd {
+        reason: StopReason,
+        more_turns: bool,
+        usage: TokenUsage,
+    },
 }
 
 /// Live agent loop. Holds the provider, the tool dispatcher, and the conversation history.
@@ -131,6 +146,7 @@ impl AgentSession {
             let mut assistant_text = String::new();
             let mut pending_tool_calls: Vec<PendingToolCall> = Vec::new();
             let mut stop_reason = StopReason::EndTurn;
+            let mut usage = TokenUsage::default();
 
             while let Some(event) = stream.next().await {
                 match event {
@@ -144,6 +160,10 @@ impl AgentSession {
                     ProviderEvent::ToolResultRequested => {
                         // Marker only — Anthropic's adapter emits this after each tool_use
                         // block. Loop continues regardless.
+                    }
+                    ProviderEvent::Usage { input_tokens, output_tokens } => {
+                        // At most one per stream (adapter contract) — plain assignment.
+                        usage = TokenUsage { input_tokens, output_tokens };
                     }
                     ProviderEvent::Stop { reason } => {
                         stop_reason = reason;
@@ -161,6 +181,7 @@ impl AgentSession {
                 self.emit(AgentEvent::TurnEnd {
                     reason: stop_reason,
                     more_turns: false,
+                    usage,
                 });
                 return Ok(());
             }
@@ -203,6 +224,7 @@ impl AgentSession {
             self.emit(AgentEvent::TurnEnd {
                 reason: stop_reason,
                 more_turns: true,
+                usage,
             });
         }
 
@@ -371,7 +393,7 @@ mod tests {
             other => panic!("expected delta, got {other:?}"),
         }
         match &events[2] {
-            AgentEvent::TurnEnd { reason, more_turns } => {
+            AgentEvent::TurnEnd { reason, more_turns, .. } => {
                 assert_eq!(reason, &StopReason::EndTurn);
                 assert!(!more_turns);
             }
@@ -442,6 +464,56 @@ mod tests {
 
         // conversation: user + assistant(tool_use) + user(tool_result) + assistant(text)
         assert_eq!(session.messages.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn turn_end_carries_per_iteration_usage() {
+        // Two-iteration run: tool turn reports 100/20, final turn 250/80.
+        // Each TurnEnd must carry ITS OWN stream's usage so a consumer summing
+        // across events gets 350 in / 100 out with no double counting.
+        let provider = Arc::new(ScriptedProvider::new(vec![
+            vec![
+                ProviderEvent::ToolCall {
+                    id: "tc_1".into(),
+                    name: "echo".into(),
+                    input: serde_json::json!({}),
+                },
+                ProviderEvent::ToolResultRequested,
+                ProviderEvent::Usage { input_tokens: 100, output_tokens: 20 },
+                ProviderEvent::Stop { reason: StopReason::ToolUse },
+            ],
+            vec![
+                ProviderEvent::Text("done".into()),
+                ProviderEvent::Usage { input_tokens: 250, output_tokens: 80 },
+                ProviderEvent::Stop { reason: StopReason::EndTurn },
+            ],
+        ]));
+        let dispatcher = Arc::new(ScriptedDispatcher {
+            defs: vec![ToolDef {
+                name: "echo".into(),
+                description: "echo".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+            }],
+            outcomes: Mutex::new(vec![ToolDispatchOutcome::ok("ok")]),
+            last_calls: Mutex::new(vec![]),
+        });
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut session = AgentSession::new(provider, dispatcher, None, tx);
+        session.send_user_message("go").await.unwrap();
+
+        let usages: Vec<TokenUsage> = collect(&mut rx)
+            .into_iter()
+            .filter_map(|e| match e {
+                AgentEvent::TurnEnd { usage, .. } => Some(usage),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(usages.len(), 2);
+        assert_eq!((usages[0].input_tokens, usages[0].output_tokens), (100, 20));
+        assert_eq!((usages[1].input_tokens, usages[1].output_tokens), (250, 80));
+        let total_in: u64 = usages.iter().map(|u| u.input_tokens).sum();
+        let total_out: u64 = usages.iter().map(|u| u.output_tokens).sum();
+        assert_eq!((total_in, total_out), (350, 100));
     }
 
     #[tokio::test]
