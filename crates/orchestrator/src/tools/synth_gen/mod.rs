@@ -17,7 +17,6 @@ use std::fmt::Write as _;
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Write as _IoWrite};
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -42,9 +41,6 @@ const PROMPT_TEMPLATE: &str = include_str!("prompts/sft_pair.md");
 const DEFAULT_PARALLELISM: usize = 4;
 const DEFAULT_EVAL_SPLIT: f32 = 0.10;
 const DEFAULT_TARGET_PAIRS: u32 = 200;
-const MAX_RETRIES: u32 = 5;
-const RETRY_BASE_SECS: u64 = 1;
-const RETRY_MAX_SECS: u64 = 30;
 const PROGRESS_EVERY_N: usize = 5;
 
 // Char-to-token heuristic (decision F). Conservative on the high side so cost estimates
@@ -358,57 +354,56 @@ async fn synth_one_chunk(
         .replace("{{CHUNK_TEXT}}", &chunk.text);
     let messages = vec![Message::user(prompt)];
 
-    let mut last_err: Option<String> = None;
-    for attempt in 0..MAX_RETRIES {
-        if attempt > 0 {
-            let delay_secs = std::cmp::min(RETRY_BASE_SECS << (attempt - 1), RETRY_MAX_SECS);
-            tokio::time::sleep(Duration::from_secs(delay_secs)).await;
-        }
+    // Default policy = the Phase 2 decision-F schedule (1→2→4→8→16 s, 5 tries).
+    // Classification: 429/5xx + mid-stream drops are transport (transient);
+    // other provider errors and unparseable model output are permanent — a
+    // sixth identical prompt won't fix malformed JSON.
+    crate::retry::with_backoff(
+        &crate::retry::BackoffPolicy::default(),
+        "synth_gen chunk",
+        |_attempt| {
+            let messages = messages.clone();
+            let provider = provider.clone();
+            async move {
+                use crate::retry::Retry;
+                let mut stream = match provider.stream(messages, &[]).await {
+                    Ok(s) => s,
+                    Err(ProviderError::Status { status, body })
+                        if status == 429 || (500..600).contains(&status) =>
+                    {
+                        return Err(Retry::Transient(SynthChunkError::ExhaustedRetries(
+                            format!("retryable status {status}: {}", truncate(&body, 200)),
+                        )));
+                    }
+                    Err(e) => {
+                        return Err(Retry::Permanent(SynthChunkError::Provider(e.to_string())))
+                    }
+                };
 
-        let stream_result = provider.stream(messages.clone(), &[]).await;
-        let mut stream = match stream_result {
-            Ok(s) => s,
-            Err(ProviderError::Status { status, body })
-                if status == 429 || (500..600).contains(&status) =>
-            {
-                last_err = Some(format!("retryable status {status}: {}", truncate(&body, 200)));
-                continue;
-            }
-            Err(e) => return Err(SynthChunkError::Provider(e.to_string())),
-        };
-
-        let mut response = String::new();
-        let mut stream_err = None;
-        while let Some(event) = stream.next().await {
-            match event {
-                ProviderEvent::Text(t) => response.push_str(&t),
-                ProviderEvent::Stop { reason: StopReason::Error(e) } => {
-                    stream_err = Some(e);
-                    break;
+                let mut response = String::new();
+                while let Some(event) = stream.next().await {
+                    match event {
+                        ProviderEvent::Text(t) => response.push_str(&t),
+                        ProviderEvent::Stop { reason: StopReason::Error(e) } => {
+                            return Err(Retry::Transient(SynthChunkError::ExhaustedRetries(
+                                format!("stream error: {e}"),
+                            )));
+                        }
+                        ProviderEvent::Stop { .. } => break,
+                        _ => {}
+                    }
                 }
-                ProviderEvent::Stop { .. } => break,
-                _ => {}
-            }
-        }
-        if let Some(e) = stream_err {
-            last_err = Some(format!("stream error: {e}"));
-            continue;
-        }
 
-        match parse_pairs(&response) {
-            Ok(pairs) => return Ok(pairs),
-            Err(e) => {
-                // Don't retry parse failures — model output structure is the issue, not transport.
-                return Err(SynthChunkError::ParseFail(format!(
-                    "{e}; raw start: {}",
-                    truncate(&response, 240)
-                )));
+                parse_pairs(&response).map_err(|e| {
+                    Retry::Permanent(SynthChunkError::ParseFail(format!(
+                        "{e}; raw start: {}",
+                        truncate(&response, 240)
+                    )))
+                })
             }
-        }
-    }
-    Err(SynthChunkError::ExhaustedRetries(
-        last_err.unwrap_or_else(|| "no attempts recorded".into()),
-    ))
+        },
+    )
+    .await
 }
 
 fn parse_pairs(text: &str) -> Result<Vec<RawPair>, String> {

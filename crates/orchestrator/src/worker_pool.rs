@@ -50,12 +50,8 @@ use tokio::time::Instant;
 use tracing::{debug, info, warn};
 
 use crate::error::WorkerError;
+use crate::retry::timeouts;
 use crate::worker::{build_command, PythonRunner, WorkerCommand};
-
-/// Default per-call deadline when the command doesn't specify one. Matches the
-/// one-shot default: forgiving enough for a cold spawn + model load on first
-/// call, tight enough that a wedged worker is reaped quickly.
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// How many trailing stderr lines to keep per worker for error attachment.
 const STDERR_TAIL_LINES: usize = 100;
@@ -121,7 +117,7 @@ impl WorkerPool {
     /// `cmd.timeout` is a total deadline covering queue wait + roundtrip.
     pub async fn call(&self, cmd: &WorkerCommand) -> Result<Value, WorkerError> {
         let worker = self.worker_for(&cmd.module).await;
-        let timeout = cmd.timeout.unwrap_or(DEFAULT_TIMEOUT);
+        let timeout = cmd.timeout.unwrap_or(timeouts::WORKER_DEFAULT);
         let deadline = Instant::now() + timeout;
 
         // Queue phase: waiting for the worker mutex counts against the

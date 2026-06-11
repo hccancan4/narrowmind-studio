@@ -17,12 +17,7 @@ use tokio::process::Command;
 use tracing::{debug, warn};
 
 use crate::error::WorkerError;
-
-/// Default timeout for one-shot worker calls. The `hello` round-trip cold-starts a Python
-/// interpreter and imports the worker package, which on a warm cache takes <1 s but can stretch
-/// past 10 s on the first run of a fresh venv. Twenty seconds is a forgiving Phase 0 ceiling;
-/// real workers will set their own deadlines.
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
+use crate::retry::timeouts;
 
 /// How to launch a Python interpreter for a worker. The defaults assume the repo's `uv` workspace
 /// from the workspace root, which is the only configuration that exists during Phase 0 dev.
@@ -119,7 +114,7 @@ struct RpcRequest<'a> {
 ///
 /// On any failure path the worker process is killed before we return; we never leak a child.
 pub async fn call_worker(runner: &PythonRunner, cmd: &WorkerCommand) -> Result<Value, WorkerError> {
-    let timeout = cmd.timeout.unwrap_or(DEFAULT_TIMEOUT);
+    let timeout = cmd.timeout.unwrap_or(timeouts::WORKER_DEFAULT);
     let mut child = build_command(runner, &cmd.module)
         .spawn()
         .map_err(|source| WorkerError::Spawn {

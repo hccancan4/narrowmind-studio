@@ -27,9 +27,7 @@ use tracing::{info, warn};
 
 use super::context::{ToolContext, ToolEvent, ToolEventSink};
 use super::registry::{Tool, ToolDef, ToolError, ToolResult};
-
-/// Default deadline for a single `run_command` call.
-const DEFAULT_TIMEOUT_SECS: u64 = 600;
+use crate::retry::timeouts;
 
 /// How many stdout / stderr lines we keep verbatim in the `tool_result` content. Streaming
 /// is unbounded — this cap is just to keep the final summary the model sees from growing
@@ -82,7 +80,9 @@ impl Tool for RunCommand {
                 reason: e.to_string(),
             })?;
         let project = ctx.current_project().await.ok_or(ToolError::NoProject)?;
-        let deadline_secs = args.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS);
+        let deadline_secs = args
+            .timeout_secs
+            .unwrap_or(timeouts::RUN_COMMAND_DEFAULT.as_secs());
 
         info!(
             command = %args.command,

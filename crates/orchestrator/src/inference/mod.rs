@@ -26,7 +26,8 @@ pub const DEFAULT_PORT: u16 = 8765;
 /// Maximum port-probe increments before giving up.
 const PORT_PROBE_LIMIT: u16 = 50;
 /// How long we wait for `/health` to come up after spawning the server.
-const STARTUP_HEALTH_TIMEOUT: Duration = Duration::from_secs(120);
+/// (Registry: `crate::retry::timeouts::INFERENCE_STARTUP_HEALTH`.)
+const STARTUP_HEALTH_TIMEOUT: Duration = crate::retry::timeouts::INFERENCE_STARTUP_HEALTH;
 /// Idle TTL — after this much time with no `mark_used()`, the server is killed.
 pub const IDLE_TTL: Duration = Duration::from_secs(10 * 60);
 
@@ -299,7 +300,7 @@ fn spawn_server(
 
 async fn wait_for_health(port: u16, deadline: Duration) -> Result<(), InferenceError> {
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
+        .timeout(crate::retry::timeouts::INFERENCE_HEALTH_PROBE)
         .build()
         .map_err(|e| InferenceError::Spawn(format!("reqwest client: {e}")))?;
     let url = format!("http://127.0.0.1:{port}/v1/models");

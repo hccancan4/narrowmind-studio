@@ -5,7 +5,6 @@
 //! source types behind the same tool name — schema gains those discriminator values then.
 
 use std::fmt::Write as _;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -14,11 +13,9 @@ use tracing::info;
 
 use super::context::ToolContext;
 use super::registry::{Tool, ToolDef, ToolError, ToolResult};
+use crate::error::WorkerError;
+use crate::retry::{timeouts, with_backoff, BackoffPolicy, Retry};
 use crate::worker::{call_worker, WorkerCommand};
-
-/// Per-call timeout. Local-dir ingestion of a few hundred mixed PDF/DOCX/EPUB files can
-/// stretch past a minute on cold caches; 10 minutes is a forgiving ceiling.
-const INGEST_TIMEOUT_SECS: u64 = 600;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -207,9 +204,28 @@ impl Tool for IngestSource {
             module: "narrowmind_workers.ingestion".into(),
             method: method.into(),
             params,
-            timeout: Some(Duration::from_secs(INGEST_TIMEOUT_SECS)),
+            timeout: Some(timeouts::INGEST),
         };
-        let value = call_worker(&runner, &cmd).await.map_err(|e| ToolError::Exec {
+        // Ingestion is idempotent (sources/<id>/ files are written atomically via
+        // .tmp swaps), so re-running the whole job after a process-level failure
+        // is safe. One retry only — re-running a multi-minute scrape five times
+        // helps nobody. RPC errors (bad path, invalid params) and timeouts are
+        // permanent: the former won't change, the latter already cost the full
+        // deadline once.
+        let value = with_backoff(&BackoffPolicy::single_retry(), "ingest_source", |_| {
+            let runner = runner.clone();
+            let cmd = cmd.clone();
+            async move {
+                call_worker(&runner, &cmd).await.map_err(|e| match e {
+                    e @ (WorkerError::Spawn { .. }
+                    | WorkerError::Io(_)
+                    | WorkerError::EarlyExit { .. }) => Retry::Transient(e),
+                    e => Retry::Permanent(e),
+                })
+            }
+        })
+        .await
+        .map_err(|e| ToolError::Exec {
             tool: "ingest_source".into(),
             message: e.to_string(),
         })?;

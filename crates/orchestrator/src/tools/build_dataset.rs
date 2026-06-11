@@ -13,7 +13,6 @@ use std::fmt::Write as _;
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Write as _IoWrite};
 use std::path::Path;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -23,10 +22,8 @@ use tracing::{info, warn};
 use super::context::ToolContext;
 use super::registry::{Tool, ToolDef, ToolError, ToolResult};
 use crate::project::ProjectTier;
+use crate::retry::timeouts;
 use crate::worker::{call_worker, WorkerCommand};
-
-/// Worker-call timeout for the embed pass — large indexes on first build can stretch.
-const EMBED_TIMEOUT_SECS: u64 = 900;
 
 #[derive(Debug, Deserialize)]
 struct BuildDatasetArgs {
@@ -127,7 +124,7 @@ impl Tool for BuildDataset {
                 module: "narrowmind_workers.rag".into(),
                 method: "rag.embed_chunks".into(),
                 params,
-                timeout: Some(Duration::from_secs(EMBED_TIMEOUT_SECS)),
+                timeout: Some(timeouts::EMBED_BUILD),
             };
             let res = call_worker(&runner, &cmd).await.map_err(|e| ToolError::Exec {
                 tool: "build_dataset".into(),

@@ -9,6 +9,7 @@ pub mod error;
 pub mod hello;
 pub mod inference;
 pub mod project;
+pub mod retry;
 pub mod secrets;
 pub mod tools;
 pub mod worker;
@@ -31,6 +32,7 @@ pub use tools::{
     new_selected_project, ProjectScope, SelectedProject, Tool, ToolContext, ToolDef, ToolError,
     ToolEvent, ToolRegistry, ToolResult,
 };
+pub use retry::{with_backoff, BackoffPolicy, Retry};
 pub use worker::{PythonRunner, WorkerCommand};
 pub use worker_pool::{PooledWorkerStatus, WorkerPool};
 

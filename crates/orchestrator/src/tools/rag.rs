@@ -10,7 +10,6 @@
 //! `apps/desktop/src-tauri/src/commands/chat.rs`).
 
 use std::fmt::Write as _;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -19,10 +18,8 @@ use tracing::{info, warn};
 
 use super::context::{ToolContext, ToolEvent};
 use super::registry::{Tool, ToolDef, ToolError, ToolResult};
+use crate::retry::timeouts;
 use crate::worker::{call_worker, WorkerCommand};
-
-const RAG_QUERY_TIMEOUT_SECS: u64 = 60;
-const CHAT_TIMEOUT_SECS: u64 = 180;
 
 /// One hit returned by the rag worker. Mirrors the rag worker's query output.
 /// Different retrieval modes populate different scoring fields:
@@ -388,7 +385,7 @@ pub async fn retrieve(
         module: "narrowmind_workers.rag".into(),
         method: "rag.query".into(),
         params,
-        timeout: Some(Duration::from_secs(RAG_QUERY_TIMEOUT_SECS)),
+        timeout: Some(timeouts::RAG_QUERY),
     };
 
     let value = if let Some(pool) = ctx.worker_pool.as_ref() {
@@ -465,7 +462,7 @@ pub async fn chat_completion(
         "stream": false,
     });
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(CHAT_TIMEOUT_SECS))
+        .timeout(timeouts::LOCAL_CHAT_COMPLETION)
         .build()
         .map_err(|e| format!("reqwest client: {e}"))?;
     let resp = client.post(&url).json(&body).send().await.map_err(|e| e.to_string())?;
@@ -513,7 +510,7 @@ where
         "stream": true,
     });
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(CHAT_TIMEOUT_SECS))
+        .timeout(timeouts::LOCAL_CHAT_COMPLETION)
         .build()
         .map_err(|e| format!("reqwest client: {e}"))?;
     let resp = client.post(&url).json(&body).send().await.map_err(|e| e.to_string())?;
