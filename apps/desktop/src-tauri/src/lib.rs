@@ -83,8 +83,19 @@ pub fn run() {
         .with_target(true)
         .init();
 
-    let store_root = ProjectStore::default_root()
-        .expect("could not determine default project root for this OS");
+    // Dev affordance: NARROWMIND_PROJECTS_ROOT overrides the OS-default
+    // projects directory. Needed whenever project data must be visible to
+    // BOTH Windows and WSL2 (Phase 4 training workers read the project dir
+    // through /mnt/c) from a working tree that isn't under the user profile —
+    // e.g. sandboxed dev sessions, or users who keep projects on another
+    // drive. Documented in docs/dev-setup.md.
+    let store_root = std::env::var_os("NARROWMIND_PROJECTS_ROOT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            ProjectStore::default_root()
+                .expect("could not determine default project root for this OS")
+        });
+    tracing::info!(root = %store_root.display(), "projects root");
     let project_store = Arc::new(ProjectStore::new(store_root));
     let ws_root =
         workspace_root().expect("could not locate workspace root from desktop crate manifest path");

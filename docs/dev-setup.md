@@ -173,6 +173,20 @@ wsl -e bash "workers/py-training/run-worker.sh" -c "import torch; print(torch.cu
 namespace** — Windows `tasklist` cannot see it. Orphan detection therefore
 probes via `wsl -e kill -0 <pid>` and kills via `wsl -e kill -9 <pid>`.
 
+### `NARROWMIND_PROJECTS_ROOT` override
+
+The training worker reads the project directory THROUGH `/mnt/c/...`, i.e.
+the real host filesystem. If your projects directory is not host-visible at
+its default location (sandboxed dev sessions are the known case — file
+writes to `%APPDATA%` may land in an overlay WSL can't see), set
+`NARROWMIND_PROJECTS_ROOT` before launching the app to point at a directory
+both sides can read — the repo's gitignored `projects/` folder works:
+
+```powershell
+$env:NARROWMIND_PROJECTS_ROOT = "<repo>\projects"
+pnpm --filter @narrowmind/desktop tauri dev
+```
+
 ---
 
 ## Worker stdio is strict UTF-8
