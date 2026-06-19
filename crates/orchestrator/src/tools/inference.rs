@@ -50,14 +50,16 @@ impl Tool for StartInferenceServer {
                           health. Default model: bartowski/Qwen2.5-7B-Instruct-GGUF Q4_K_M. \
                           KV cache is quantized to q8_0 by default (frees VRAM for longer \
                           context on 8 GB; pass kv_cache_type='f16' for the exact-baseline \
-                          opt-out). Returns the endpoint URL the rag_chat / chat_preview \
-                          tools will point at."
+                          opt-out). To serve a fine-tuned domain model, pass its absolute \
+                          .gguf path (from export_domain_gguf / list_domain_models) as \
+                          `filename` — it is loaded directly, no download. Returns the \
+                          endpoint URL the rag_chat / chat_preview tools will point at."
                 .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "repo_id":      { "type": "string", "description": "HF repo id, e.g. 'bartowski/Qwen2.5-7B-Instruct-GGUF'." },
-                    "filename":     { "type": "string", "description": "GGUF filename inside the repo." },
+                    "filename":     { "type": "string", "description": "GGUF filename inside the repo, OR an absolute local path to a domain GGUF (from export_domain_gguf) — a local path is served directly, no download." },
                     "n_ctx":        { "type": "integer", "minimum": 256, "maximum": 32768, "default": 4096 },
                     "n_gpu_layers": { "type": "integer", "default": -1, "description": "-1 = all layers on GPU; 0 = CPU-only." },
                     "kv_cache_type": { "type": "string", "enum": ["f16", "q8_0", "q4_0"], "default": "q8_0", "description": "KV-cache quantization. q8_0 (default) is near-lossless and frees ~half the KV VRAM; f16 is the full-precision opt-out; q4_0 is aggressive (more context, quality risk). Quantized caches enable Flash Attention automatically." },
@@ -92,11 +94,18 @@ impl Tool for StartInferenceServer {
             .clone();
 
         let mut model = ModelSpec::default_qwen2_5_7b_q4km();
+        let repo_given = args.repo_id.is_some();
         if let Some(r) = args.repo_id {
             model.repo_id = r;
         }
         if let Some(f) = args.filename {
             model.filename = f;
+        }
+        // A local domain GGUF path (from export_domain_gguf) is not an HF repo
+        // file — label the repo "local" so status is honest and the model-change
+        // check keys on the path. (Phase 4.6 slice 3c.)
+        if !repo_given && std::path::Path::new(&model.filename).is_absolute() {
+            model.repo_id = "local".into();
         }
         if let Some(n) = args.n_ctx {
             model.n_ctx = n;

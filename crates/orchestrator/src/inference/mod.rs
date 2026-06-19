@@ -330,10 +330,24 @@ impl InferenceManager {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// A local domain GGUF (exported by `export_domain_gguf`) is served directly:
+/// if `filename` is an absolute path to an existing file, it isn't an HF repo
+/// filename. Returns the path to serve, or `None` to fall through to a download.
+/// (Phase 4.6 slice 3c.)
+fn local_model_path(filename: &str) -> Option<PathBuf> {
+    let p = PathBuf::from(filename);
+    (p.is_absolute() && p.is_file()).then_some(p)
+}
+
 async fn download_model(
     runner: &PythonRunner,
     model: &ModelSpec,
 ) -> Result<PathBuf, InferenceError> {
+    // Local domain GGUF — skip the HuggingFace round-trip entirely.
+    if let Some(local) = local_model_path(&model.filename) {
+        info!(path = %local.display(), "serving local GGUF (no download)");
+        return Ok(local);
+    }
     let cmd = WorkerCommand {
         module: "narrowmind_workers.inference".into(),
         method: "inference.download_model".into(),
@@ -602,5 +616,19 @@ mod tests {
         assert_eq!(spec.kv_cache_type, KvCacheType::Q8_0);
         assert!(!spec.flash_attn);
         assert!(spec.prompt_cache);
+    }
+
+    #[test]
+    fn local_model_path_detects_existing_absolute_gguf() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let f = tmp.path().join("domain-q4_k_m.gguf");
+        std::fs::write(&f, b"gguf").unwrap();
+        // absolute path to an existing file -> serve it directly
+        assert_eq!(local_model_path(f.to_str().unwrap()), Some(f.clone()));
+        // absolute but missing -> None (fall through to HF download)
+        let missing = tmp.path().join("missing.gguf");
+        assert_eq!(local_model_path(&missing.to_string_lossy()), None);
+        // a plain HF repo filename (relative) -> None
+        assert_eq!(local_model_path("Qwen2.5-7B-Instruct-Q4_K_M.gguf"), None);
     }
 }
