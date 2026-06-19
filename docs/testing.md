@@ -7,19 +7,34 @@ file is current.
 
 ---
 
-## Phase 4.6 efficiency — slices 1–2 (2026-06-19)
+## Phase 4.6 efficiency — COMPLETE (2026-06-20)
 
-Run-side serving levers (KV-cache quantization + prompt-prefix cache). **Rust-only**
-— no Python/TypeScript changes — so only the orchestrator count moves:
+Tier-1 efficiency: run-side serving levers (slices 1–2) + the produce→GGUF→serve
+loop (slices 3–4) + a selectable Local Chat model picker. On `phase-4.6-efficiency`
+(merged main: seed + UTF-8 stdin fixes).
 
 | Runtime | Command | Result |
 |---|---|---|
-| **Rust unit (orchestrator)** | `cargo test -p narrowmind-orchestrator --lib` | **90 passed** (+12 vs the Phase-4 working count: +10 KV-quant arg-builder/serde/ggml-id/flash-attn-coupling, +2 prompt-cache) |
-| **Rust integration (orchestrator)** | `cargo test -p narrowmind-orchestrator --tests` | **16 passed** (2 hello + 9 WorkerPool + 5 streaming) — unchanged |
-| Python / TypeScript | — | untouched by these slices |
+| **Rust unit (orchestrator)** | `cargo test -p narrowmind-orchestrator --lib` | **92 passed** (+14 vs the Phase-4 working count: +10 KV-quant, +2 prompt-cache, +1 read_domain_models, +1 local_model_path) |
+| **Rust integration (orchestrator)** | `cargo test -p narrowmind-orchestrator --tests` | **16 passed** — unchanged |
+| **Python** | `uv --directory workers/py run pytest tests/test_training_dataset.py` | **24 passed** (+5 vs Phase-4: u32-seed ×2, resolve_target_modules, slice-3 path helpers ×3, domain_calibration_corpus — minus overlap) |
+| **TypeScript** | `pnpm -r typecheck` | clean (model-picker types in `lib/tauri.ts` + `ChatPreview.tsx`) |
 
-clippy: net-zero new warnings (the crate's pre-existing pedantic warnings are
-unchanged).
+clippy: net-zero new warnings throughout (the crate's pre-existing pedantic
+warnings are unchanged).
+
+Slices: 1 KV-quant (q8_0) `a5edf84` · 2 prompt-cache `1d193a3` · 3a/3b/3c
+merge→GGUF→serve `9d3ad81`/`070a81f`/`e6fbbe3` · picker `a133041`/`e9fb37c` ·
+4 domain-imatrix `32cf5f7`.
+
+**End-to-end produce validations (reference RTX 3070):**
+- Slice 3: merge→convert→Q4_K_M against the M7 adapter `2a38f0c8` →
+  `deneme1-faz2-q4_k_m.gguf` (4.4 GB); ~30 GB ext4 intermediates reclaimed.
+- Slice 4: imatrix path with `quant=IQ4_XS` (which *requires* an imatrix) →
+  `deneme1-faz2-iq4_xs.gguf` (4.0 GB, `imatrix=true`) — proves llama-imatrix →
+  `--imatrix` quantize works. Two domain GGUFs now serveable + A/B-able in the picker.
+- Local Chat: serves a local domain GGUF directly (`serving local GGUF (no download)`),
+  llama.cpp loaded the merged GGUF; picker switches base ↔ fine-tune.
 
 **Machine-side gates (reference RTX 3070, 2026-06-19) — PASSED:**
 - GPU smoke: inference server came up healthy spawned with
