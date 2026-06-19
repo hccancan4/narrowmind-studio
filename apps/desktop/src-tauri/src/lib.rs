@@ -182,6 +182,7 @@ pub fn run() {
             commands::chat::chat_preview_send,
             commands::chat::chat_preview_context,
             commands::chat::chat_preview_bootstrap,
+            commands::chat::chat_preview_models,
             // training monitor
             commands::training::training_status,
             commands::training::training_runs,

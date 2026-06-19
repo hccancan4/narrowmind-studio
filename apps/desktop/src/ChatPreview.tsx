@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-import { chat, type ChatHit, type ChatPreviewContext } from "./lib/tauri";
+import {
+  chat,
+  type ChatHit,
+  type ChatPreviewContext,
+  type ServeableModel,
+} from "./lib/tauri";
 import "./index.css";
 
 type Message = { role: "user" | "assistant"; text: string; hits?: ChatHit[] };
@@ -12,12 +17,49 @@ export function ChatPreview() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [models, setModels] = useState<ServeableModel[]>([]);
+  const [modelKey, setModelKey] = useState<string | null>(null);
+  const [switching, setSwitching] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
 
-  // Load context (project + endpoint).
+  // Load context (project + endpoint) + the serveable-model list for the picker.
   useEffect(() => {
-    chat.context().then(setCtx).catch((e) => setError(`${e}`));
+    chat
+      .context()
+      .then((c) => {
+        setCtx(c);
+        setModelKey(c.model_key ?? null);
+      })
+      .catch((e) => setError(`${e}`));
+    chat
+      .models()
+      .then((r) => {
+        setModels(r.models);
+        setModelKey((k) => k ?? r.current);
+      })
+      .catch(() => {});
   }, []);
+
+  // Switch the served model: restarts the inference server on the chosen model
+  // (a model load takes a few seconds) and starts a fresh conversation.
+  const switchModel = useCallback(
+    async (key: string) => {
+      if (!key || key === modelKey || switching || busy) return;
+      setSwitching(true);
+      setError(null);
+      try {
+        const c = await chat.bootstrap(key);
+        setCtx(c);
+        setModelKey(c.model_key ?? key);
+        setMessages([]);
+      } catch (e) {
+        setError(`switch model: ${e}`);
+      } finally {
+        setSwitching(false);
+      }
+    },
+    [modelKey, switching, busy],
+  );
 
   // Stream wiring: register listeners once.
   useEffect(() => {
@@ -88,14 +130,35 @@ export function ChatPreview() {
       <header>
         <span className="tag">chat preview</span>
         <span className="project-name">{ctx?.project ?? "(no project)"}</span>
+        {models.length > 0 && (
+          <select
+            className="model-select"
+            value={modelKey ?? ""}
+            disabled={switching || busy}
+            title="serving model — switch to A/B base vs your fine-tune"
+            onChange={(e) => switchModel(e.target.value)}
+            style={{
+              background: "#1e1e1e",
+              color: "#ddd",
+              border: "1px solid #444",
+              borderRadius: 4,
+              padding: "2px 6px",
+              fontSize: "0.82em",
+              maxWidth: "16rem",
+            }}
+          >
+            {modelKey === null && <option value="">(starting…)</option>}
+            {models.map((m) => (
+              <option key={m.key} value={m.key}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        )}
+        {switching && <span className="model" style={{ opacity: 0.7 }}>switching…</span>}
         {ctx?.endpoint && (
           <span className="endpoint" title={ctx.endpoint}>
             {ctx.endpoint}
-          </span>
-        )}
-        {ctx?.filename && (
-          <span className="model" title={ctx.filename}>
-            {ctx.filename}
           </span>
         )}
       </header>

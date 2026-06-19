@@ -9,10 +9,12 @@
 
 use std::sync::Arc;
 
+use std::path::Path;
+
 use narrowmind_orchestrator::tools::rag::{
     assemble_prompt, chat_completion_stream, retrieve, RetrievedChunk,
 };
-use narrowmind_orchestrator::{ModelSpec, ToolContext};
+use narrowmind_orchestrator::{models, InferenceStatus, ModelSpec, ToolContext};
 use serde_json::json;
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::mpsc;
@@ -116,6 +118,110 @@ pub async fn chat_preview_send(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Selectable serving models (Phase 4.6): base registry + domain GGUFs
+// ---------------------------------------------------------------------------
+
+/// The models the chat preview can serve for a project: the registry base
+/// models plus any exported domain GGUFs in `models/`. Stable keys
+/// (`base:<id>` / `domain:<filename>`) round-trip a choice from the UI.
+fn serveable_models(project_root: &Path) -> Vec<serde_json::Value> {
+    let mut out: Vec<serde_json::Value> = models::all()
+        .iter()
+        .map(|m| {
+            json!({
+                "key": format!("base:{}", m.id),
+                "label": format!("{} (base)", m.display_name),
+                "kind": "base",
+            })
+        })
+        .collect();
+    if let Ok(entries) = std::fs::read_dir(project_root.join("models")) {
+        let mut ggufs: Vec<String> = entries
+            .flatten()
+            .filter_map(|e| {
+                let p = e.path();
+                if p.extension().and_then(|x| x.to_str()) != Some("gguf") {
+                    return None;
+                }
+                p.file_name().and_then(|n| n.to_str()).map(str::to_string)
+            })
+            .collect();
+        ggufs.sort();
+        for f in ggufs {
+            out.push(json!({
+                "key": format!("domain:{f}"),
+                "label": format!("{f} (fine-tune)"),
+                "kind": "domain",
+            }));
+        }
+    }
+    out
+}
+
+/// Resolve a serveable-model key to a `ModelSpec`. Domain GGUFs reuse the
+/// registry default's serving knobs (n_ctx, q8_0 KV, flash-attn, prompt cache)
+/// with the local path swapped in. `None` for an unknown key.
+fn model_spec_for_key(key: &str, project_root: &Path) -> Option<ModelSpec> {
+    if let Some(id) = key.strip_prefix("base:") {
+        return models::get(id).map(|m| m.to_model_spec());
+    }
+    if let Some(fname) = key.strip_prefix("domain:") {
+        let path = project_root.join("models").join(fname);
+        if !path.is_file() {
+            return None;
+        }
+        let mut spec = models::default_model().to_model_spec();
+        spec.repo_id = "local".into();
+        spec.filename = path.to_string_lossy().into_owned();
+        return Some(spec);
+    }
+    None
+}
+
+/// What Local Chat opens with when no model is chosen: the project's domain
+/// GGUF (the user's fine-tune) if one exists, else the registry default base.
+fn default_model_key(project_root: &Path) -> String {
+    serveable_models(project_root)
+        .iter()
+        .find(|m| m["kind"].as_str() == Some("domain"))
+        .and_then(|m| m["key"].as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("base:{}", models::default_model().id))
+}
+
+/// Key of the currently-running server, so the UI can pre-select it.
+fn current_model_key(status: &InferenceStatus) -> Option<String> {
+    if !status.running {
+        return None;
+    }
+    let filename = status.filename.as_deref()?;
+    if status.repo_id.as_deref() == Some("local") {
+        let base = Path::new(filename).file_name()?.to_str()?;
+        return Some(format!("domain:{base}"));
+    }
+    models::all()
+        .iter()
+        .find(|m| m.gguf_file == filename)
+        .map(|m| format!("base:{}", m.id))
+}
+
+/// List the serveable models for the selected project + which one is live.
+#[tauri::command]
+pub async fn chat_preview_models(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let project = state
+        .selected_project
+        .lock()
+        .await
+        .clone()
+        .ok_or_else(|| "select a project first".to_string())?;
+    let status = state.inference.status().await;
+    Ok(json!({
+        "models": serveable_models(&project.root),
+        "current": current_model_key(&status),
+    }))
+}
+
 /// Zero-API bootstrap for the chat preview window. The "Local chat" banner button
 /// calls this so the user can start a purely-local conversation without first
 /// asking Sonnet to run the `open_chat_preview` agent tool — that detour costs
@@ -131,12 +237,14 @@ pub async fn chat_preview_send(
 #[tauri::command]
 pub async fn chat_preview_bootstrap(
     state: State<'_, AppState>,
+    model_key: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    // Reject early if no project is selected so the window doesn't open into an
-    // empty-context error state — the user wouldn't know what to do.
-    if state.selected_project.lock().await.is_none() {
-        return Err("select a project first".into());
-    }
+    let project = state
+        .selected_project
+        .lock()
+        .await
+        .clone()
+        .ok_or_else(|| "select a project first".to_string())?;
 
     // KARAR 1: training owns the VRAM. Local Chat NEVER interrupts a run —
     // it reports the situation honestly instead. ("Local Chat is sacred"
@@ -153,28 +261,48 @@ pub async fn chat_preview_bootstrap(
         }));
     }
 
-    let model = ModelSpec::default_qwen2_5_7b_q4km();
-    let endpoint = state
+    // Which model to serve:
+    //  - explicit key from the picker -> switch to it (ensure_running restarts
+    //    if the server is on a different model);
+    //  - no key + a server already up -> reuse it (no surprise switch);
+    //  - no key + nothing up -> the smart default (the project's domain GGUF if
+    //    one exists, else the base) so one click lands on the user's fine-tune.
+    let spec = match model_key {
+        Some(key) => model_spec_for_key(&key, &project.root)
+            .ok_or_else(|| format!("unknown model `{key}`"))?,
+        None => {
+            let status = state.inference.status().await;
+            if status.running {
+                return Ok(bootstrap_context(&project.name, &status));
+            }
+            let key = default_model_key(&project.root);
+            model_spec_for_key(&key, &project.root)
+                .ok_or_else(|| format!("default model `{key}` unresolved"))?
+        }
+    };
+
+    state
         .inference
-        .ensure_running(state.python_runner.as_ref(), &model)
+        .ensure_running(state.python_runner.as_ref(), &spec)
         .await
         .map_err(|e| format!("start inference server: {e}"))?;
     state.inference.mark_used().await;
 
     let status = state.inference.status().await;
-    let project = state
-        .selected_project
-        .lock()
-        .await
-        .as_ref()
-        .map(|s| s.name.clone());
-    Ok(json!({
+    Ok(bootstrap_context(&project.name, &status))
+}
+
+/// The context payload the chat window consumes (project + live endpoint +
+/// which model is serving, as a selectable key).
+fn bootstrap_context(project: &str, status: &InferenceStatus) -> serde_json::Value {
+    json!({
         "project": project,
-        "endpoint": endpoint,
+        "endpoint": status.endpoint,
         "model": status.repo_id,
         "filename": status.filename,
         "running": status.running,
-    }))
+        "model_key": current_model_key(status),
+    })
 }
 
 /// Provides the chat preview window the same project + endpoint info the parent passed via
@@ -195,6 +323,7 @@ pub async fn chat_preview_context(state: State<'_, AppState>) -> Result<serde_js
         "model": status.repo_id,
         "filename": status.filename,
         "running": status.running,
+        "model_key": current_model_key(&status),
     }))
 }
 

@@ -120,12 +120,28 @@ export type ChatPreviewContext = {
   model: string | null;
   filename: string | null;
   running: boolean;
+  /** Stable key of the live model (`base:<id>` / `domain:<file>`), so the
+   *  picker can pre-select it. Null when no server is running. */
+  model_key?: string | null;
   /** KARAR 1: set by bootstrap when a training run owns the VRAM. The chat
    *  window is NOT opened; the caller shows an honest status instead. */
   training_active?: boolean;
   run_id?: string;
   step?: number;
   total_steps?: number;
+};
+
+/** A model the chat preview can serve: a registry base or an exported domain GGUF. */
+export type ServeableModel = {
+  key: string;
+  label: string;
+  kind: "base" | "domain";
+};
+
+export type ServeableModels = {
+  models: ServeableModel[];
+  /** Key of the model currently being served, or null if none. */
+  current: string | null;
 };
 
 export type ChatHit = {
@@ -182,14 +198,18 @@ export const training = {
 
 export const chat = {
   context: () => invoke<ChatPreviewContext>("chat_preview_context"),
+  /** Serveable models for the current project (registry bases + exported domain
+   *  GGUFs) plus which one is live — drives the model picker. */
+  models: () => invoke<ServeableModels>("chat_preview_models"),
   /**
-   * Zero-API entry: ensures the local Qwen inference server is running for the
-   * currently-selected project and returns the same context shape `context()`
-   * does. The "Local chat" banner button calls this so the floating window can
-   * open without first paying for a Sonnet turn just to fire the
-   * `open_chat_preview` agent tool. Throws if no project is selected.
+   * Zero-API entry: ensures a local inference server is running for the selected
+   * project and returns the same context shape `context()` does. With no
+   * `modelKey` it picks the smart default (the project's domain GGUF if one
+   * exists, else the base) and reuses a server already up. Pass a key from
+   * `models()` to switch the served model. Throws if no project is selected.
    */
-  bootstrap: () => invoke<ChatPreviewContext>("chat_preview_bootstrap"),
+  bootstrap: (modelKey?: string) =>
+    invoke<ChatPreviewContext>("chat_preview_bootstrap", { modelKey }),
   send: (
     query: string,
     opts: { topK?: number; maxTokens?: number; temperature?: number } = {},
