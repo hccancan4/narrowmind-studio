@@ -18,8 +18,10 @@ from narrowmind_workers.training.dataset import (
     truncation_prescreen,
 )
 from narrowmind_workers.training.runner import (
+    ALL_LINEAR_MODULES,
     _latest_checkpoint,
     append_metric,
+    resolve_target_modules,
     run_dir,
     write_status,
 )
@@ -81,6 +83,22 @@ def test_from_params_ignores_unknown_keys() -> None:
 def test_validation_rejects_broken_configs(bad: dict) -> None:
     with pytest.raises(ValueError):
         TrainingParams.from_params(bad)
+
+
+def test_resolve_target_modules_expands_all_linear() -> None:
+    """Regression: 'all-linear' must become an explicit list, never be passed as
+    a string. The installed Unsloth/PEFT iterates a bare string into a set of
+    characters ({'a','l','-','i','n','e','r'}) and fails the run with
+    'Target modules ... not found in the base model'."""
+    assert resolve_target_modules("all-linear") == ALL_LINEAR_MODULES
+    assert "q_proj" in resolve_target_modules("all-linear")
+    assert "down_proj" in resolve_target_modules("all-linear")
+    # a comma-separated custom spec -> list of names
+    assert resolve_target_modules("q_proj, v_proj") == ["q_proj", "v_proj"]
+    # a bare module name must NOT become a set of characters
+    assert resolve_target_modules("q_proj") == ["q_proj"]
+    # the result is always a list (the type PEFT needs), never a str
+    assert isinstance(resolve_target_modules("all-linear"), list)
 
 
 # ---------------------------------------------------------------------------

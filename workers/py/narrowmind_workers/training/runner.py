@@ -37,6 +37,41 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# LoRA target-module resolution (pure, testable)
+# ---------------------------------------------------------------------------
+
+# The linear projections LoRA adapts on Qwen2.5 / Llama / Gemma family models:
+# the four attention projections + the three MLP projections. This is the
+# canonical "all linear layers" set Unsloth's own examples target.
+ALL_LINEAR_MODULES = [
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj",
+]
+
+
+def resolve_target_modules(spec: str) -> list[str]:
+    """Resolve the config ``target_modules`` string to an explicit module list.
+
+    The installed Unsloth/PEFT build does NOT accept the ``"all-linear"`` string
+    keyword: passed as-is it iterates the string into a set of single characters
+    (``{'a', 'l', '-', 'i', 'n', 'e', 'r'}``) and fails the run with
+    "Target modules ... not found in the base model". Always hand it a list.
+
+    - ``"all-linear"`` -> the canonical 7 linear projections.
+    - anything else -> comma-split into a list, so even a bare ``"q_proj"``
+      becomes ``["q_proj"]`` rather than a set of characters.
+    """
+    if spec == "all-linear":
+        return list(ALL_LINEAR_MODULES)
+    return [m.strip() for m in spec.split(",") if m.strip()]
+
+
+# ---------------------------------------------------------------------------
 # Run-directory bookkeeping (pure, testable)
 # ---------------------------------------------------------------------------
 
@@ -136,7 +171,8 @@ def execute_training(
         model,
         r=params.lora_r,
         lora_alpha=params.lora_alpha,
-        target_modules="all-linear" if params.target_modules == "all-linear" else params.target_modules,
+        # Explicit list, never the "all-linear" string — see resolve_target_modules.
+        target_modules=resolve_target_modules(params.target_modules),
         use_gradient_checkpointing=params.gradient_checkpointing,
         random_state=params.seed,
     )
