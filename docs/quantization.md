@@ -66,14 +66,53 @@ PTQ imatrix conversions are the normal, well-tested path.
 
 ---
 
-## What Phase 6 export will produce
+## Phase 4.6 — efficiency levers (Tier 1)
 
-Phase 6 ships "export trained DSLM → GGUF → Ollama Modelfile." Scope pin:
+> **Supersession of KARAR 8 / the Phase 6 deferral.** Phase 4 locked "adapter
+> HF format only, no GGUF merge — that's Phase 6" (KARAR 8; the comment still
+> lives at `training/runner.py`). Phase 4.6 deliberately **pulls the
+> merge→GGUF + imatrix export forward** because it is the memory backbone for
+> serving a domain model on 8 GB. Phase 6 keeps the *packaging* layer (Ollama
+> Modelfile, SDK, template repos); the GGUF production itself moves here.
+> Quantization is the backbone; everything else is secondary for "fit it in
+> memory." Tuned for the RTX 3070 (8 GB, Ampere — k-/IQ-quant lane, no FP8).
 
-- **Our export is PTQ.** After a LoRA merge, we quantize the merged weights
-  with llama.cpp's standard pipeline (Q4_K_M default, imatrix optional).
-  That is the right tool: our fine-tunes start from instruct checkpoints and
-  train adapters for minutes-to-hours; nobody is re-running pretraining.
+The roadmap entry is `docs/ROADMAP.md → Phase 4.6`. Two halves:
+
+### Run side — serving levers (shipped)
+
+These land against the *existing* GGUF, no training required, and are the
+lowest-risk part of the tier. Configured on `ModelSpec` (defaults in
+`crates/orchestrator/src/models.rs`), overridable per call via
+`start_inference_server`:
+
+- **KV-cache quantization** (`kv_cache_type`, default `q8_0`). The K/V cache
+  competes with the Q4 weights for VRAM; `q8_0` is near-lossless and roughly
+  halves it, so longer RAG context (chunks + system prompt + query) fits on
+  8 GB. `f16` is the exact-baseline opt-out; `q4_0` is the aggressive opt-in.
+  A quantized cache auto-enables Flash Attention (llama.cpp requires it for a
+  quantized **value** cache). The `q8_0` default is gated on the 56-pair eval
+  holding (recall 0.98 / judge 4.55) — if it regresses, the fallback is a
+  one-flag flip back to `f16`.
+- **Prompt-prefix cache** (`prompt_cache`, default on). Reuses llama.cpp's
+  host-RAM prompt cache so the shared system prompt + repeated RAG context
+  aren't re-evaluated every request. No VRAM cost (`cache_type=ram`).
+
+### Produce side — export is PTQ (planned, pulled forward)
+
+- **Our export is PTQ.** After a LoRA merge (PyTorch / py-training env), we
+  quantize the merged weights with llama.cpp's standard pipeline. That is the
+  right tool: our fine-tunes start from instruct checkpoints and train
+  adapters for minutes-to-hours; nobody is re-running pretraining.
+- **Domain-calibrated imatrix.** Unlike the upstream bartowski PTQ (calibrated
+  on a generic corpus), our export uses the *project's own* corpus
+  (`datasets/rag.jsonl`) as the `llama-imatrix` calibration set, so pushing to
+  low bits (Q4_K_M default, IQ4_XS / IQ3 for headroom) preserves
+  domain-relevant weights. Output stays GGUF; no PyTorch on the run side.
+- **One GGUF per domain, managed as files** (`projects/<name>/models/*.gguf`).
+  The single-user path is merge→one GGUF per domain and load the one needed —
+  this *replaces* any runtime multi-LoRA adapter paging (explicitly out of
+  scope).
 - **We do not produce QAT.** QAT is a training-time regime owned by the base
   model vendor (Google, for Gemma). If a user fine-tunes a QAT base, the
   merged-and-PTQ'd export loses the QAT guarantee — the export UI should say
@@ -81,8 +120,7 @@ Phase 6 ships "export trained DSLM → GGUF → Ollama Modelfile." Scope pin:
   source for that warning).
 - Practical consequence for Gemma 4 fine-tunes: serve the LoRA *adapter*
   alongside the QAT base GGUF where possible (llama.cpp `--lora`), rather
-  than merge-and-requantize, to keep the QAT weights intact. Decision point
-  lands in Phase 6 design.
+  than merge-and-requantize, to keep the QAT weights intact.
 
 ---
 
@@ -93,6 +131,7 @@ Phase 6 ships "export trained DSLM → GGUF → Ollama Modelfile." Scope pin:
 | Quant regime | PTQ (imatrix Q4_K_M) | Official QAT checkpoints |
 | Safe GGUF source | any reputable PTQ conversion (we pin bartowski) | QAT-aware ONLY (we pin Unsloth) |
 | Naive conversion risk | normal PTQ tax | −8.8…−15.4 pts — never do it |
+| Serving KV cache (Phase 4.6) | q8_0 default (f16 opt-out) | q8_0 default (f16 opt-out) |
 | VRAM @ recommended quant | ~5 GB | ~6.6 GB |
 | Fine-tune (QLoRA, Unsloth) | supported, comfortable on 8 GB | supported, 8-10 GB — at the 3070 floor |
 | Turkish quality | eval'd informally in Phase 3 (dogfood corpus is EN) | unverified — eval before Turkish production use |

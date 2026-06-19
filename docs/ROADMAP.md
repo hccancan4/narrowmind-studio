@@ -161,6 +161,53 @@ Console comparison report ranks them on the shared eval set, and the registry
 entry's `quantization_notes` (QAT trap, Turkish-eval caveat) are surfaced in
 the run report.
 
+### Phase 4.6 — Efficiency (Tier 1)
+
+**Goal**: run a domain model under tight VRAM on the RTX 3070 (8 GB, Ampere —
+GGUF k-/IQ-quant lane, no FP8). *Quantization is the memory backbone;
+everything else is secondary for "fit it in memory."* See
+`docs/quantization.md → Phase 4.6` for the full rationale.
+
+**Supersession note**: this pulls the GGUF-production half of Phase 6 forward
+(merge→GGUF + imatrix), overriding the Phase 4 KARAR 8 deferral ("adapter HF
+format only"). Phase 6 keeps the *packaging* layer (Modelfile, SDK, templates).
+
+**Deliverables** (incremental, one reviewable slice each):
+- *Run side (shipped):*
+  - **KV-cache quantization** — `kv_cache_type` on `ModelSpec` (default `q8_0`,
+    near-lossless, ~half the KV VRAM so longer RAG context fits); `f16` opt-out,
+    `q4_0` aggressive opt-in; quantized cache auto-enables Flash Attention.
+  - **Prompt-prefix cache** — reuse llama.cpp's host-RAM prompt cache for the
+    shared system prompt + repeated RAG context (no VRAM cost).
+- *Produce side (gated on a trained adapter + provisioned llama.cpp binaries):*
+  - **Merge adapter → one GGUF per domain**, managed as files under
+    `projects/<name>/models/` (replaces runtime multi-LoRA paging — out of scope).
+  - **Domain-calibrated imatrix quantization** — use the project corpus
+    (`datasets/rag.jsonl`) as the `llama-imatrix` calibration set → low-bit GGUF
+    (Q4_K_M default, IQ4_XS / IQ3 for headroom). Output GGUF, no PyTorch.
+
+**Tier 2 (conditional, not built — triggers noted)**: attention-sink
+preservation (only if KV compression / a sliding window lands); ExLlamaV3 (only
+if a fixed small model fully fits 8 GB and hits a speed wall — it loses
+llama.cpp's CPU offload, so never a default).
+
+**Tier 3 (research, gated, hooks only)**: STE-trained retrieval/budget gate
+(Gumbel-softmax + straight-through estimator, trained in py-training, ties to
+hybrid retrieval); D-LLM-style dynamic layer skipping (needs a PyTorch
+inference path — GATE: first prove FLOPs/KV savings survive on a 4-bit base,
+since weights dominate the 8 GB budget and quantization already shrinks them).
+
+**Out of scope (hard guardrails)**: engine swaps (vLLM / TensorRT-LLM / SGLang
+/ TGI — llama.cpp stays), llm-d / Kubernetes / distributed serving, runtime
+multi-LoRA adapter paging, tensor-network / quantum-mechanics compression, FP8
+(no Ampere support).
+
+**Acceptance**: serving the default Qwen GGUF with `q8_0` KV + prompt cache
+passes a GPU smoke (health + Local-Chat generation + reduced KV footprint) and
+holds the 56-pair eval (recall ≈ 0.98 / judge ≈ 4.55, no score≤2); a domain
+fine-tune merges to a single imatrix-quantized GGUF and serves through Local
+Chat.
+
 ---
 
 ## Phase 5 — Hybrid + Eval Console (~1 week)
@@ -185,11 +232,18 @@ the run report.
 
 **Goal**: Ship the model out of the app and into a real website.
 
+> **Scope moved**: the GGUF-production steps below (merge → convert → quantize)
+> were pulled forward to **Phase 4.6 — Efficiency** so domain models can be
+> served under 8 GB earlier. Phase 6 now consumes the GGUF that 4.6 produces and
+> focuses on packaging + distribution (Modelfile, Ollama registration, SDK,
+> templates). The export-worker bullets are kept here for continuity; treat them
+> as "wire 4.6's GGUF output into the Modelfile/Ollama flow."
+
 **Deliverables**:
-- `export` worker:
-  - Merge LoRA into base (HF format)
-  - Convert to GGUF (vendored `convert_hf_to_gguf.py`)
-  - Quantize (Q4_K_M default; Q5_K_M, Q8_0 optional)
+- `export` worker (GGUF production now lands in Phase 4.6; here it is reused):
+  - Merge LoRA into base (HF format) — *Phase 4.6*
+  - Convert to GGUF (vendored `convert_hf_to_gguf.py`) — *Phase 4.6*
+  - Quantize (Q4_K_M default; Q5_K_M, Q8_0 optional; domain imatrix) — *Phase 4.6*
   - Generate Ollama `Modelfile` with the project's system prompt baked in
 - One-click "Export to Ollama" flow: writes to `models/<tag>/`, optionally runs `ollama create <tag>` if Ollama CLI is present
 - `packages/sdk-js` published as `@narrowmind/client` on npm:

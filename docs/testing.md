@@ -7,6 +7,30 @@ file is current.
 
 ---
 
+## Phase 4.6 efficiency — slices 1–2 (2026-06-19)
+
+Run-side serving levers (KV-cache quantization + prompt-prefix cache). **Rust-only**
+— no Python/TypeScript changes — so only the orchestrator count moves:
+
+| Runtime | Command | Result |
+|---|---|---|
+| **Rust unit (orchestrator)** | `cargo test -p narrowmind-orchestrator --lib` | **90 passed** (+12 vs the Phase-4 working count: +10 KV-quant arg-builder/serde/ggml-id/flash-attn-coupling, +2 prompt-cache) |
+| **Rust integration (orchestrator)** | `cargo test -p narrowmind-orchestrator --tests` | **16 passed** (2 hello + 9 WorkerPool + 5 streaming) — unchanged |
+| Python / TypeScript | — | untouched by these slices |
+
+clippy: net-zero new warnings (the crate's pre-existing pedantic warnings are
+unchanged). **Pending machine-side gates** (reference RTX 3070): GPU smoke
+(`q8_0` KV + flash-attn health/generation, reduced KV VRAM) and the 56-pair
+eval no-regression check (recall ≈ 0.98 / judge ≈ 4.55). If `q8_0` regresses,
+the default flips back to `f16` (one flag).
+
+> Note: the full Phase-4 (M1–M6) test additions — training worker/manager + the
+> Python training-dataset tests — are not yet folded into the headline baseline
+> below; that reconciliation lands with the M7 acceptance update. The numbers
+> here are the orchestrator deltas attributable to Phase 4.6.
+
+---
+
 ## Current baseline (2026-06-11 PM, post pre-Phase-4 groundwork)
 
 | Runtime | Command | Result |

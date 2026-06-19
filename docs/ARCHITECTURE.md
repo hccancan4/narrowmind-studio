@@ -208,10 +208,10 @@ Workers:
 
 - **`ingestion`** — PyMuPDF (PDFs), EbookLib (EPUB), trafilatura (web), wikipedia-api (categorized scrape), `datasets` (HF), python-docx. Outputs cleaned chunks to `sources/<id>/chunks.jsonl`.
 - **`training`** — Unsloth as the default backend (4-bit QLoRA, fits 7B on 8 GB VRAM). Axolotl as the "power user" alternative for config-driven runs. Reads SFT JSONL, writes adapter to `runs/<id>/adapter/`. Streams metrics to the orchestrator via RPC notifications.
-- **`inference`** — llama.cpp server (via `llama-cpp-python` or subprocess to `llama-server`). Loads GGUF + optional LoRA. Exposes an OpenAI-compatible local endpoint used by the chat preview and the eval worker.
+- **`inference`** — llama.cpp server (via `llama-cpp-python` or subprocess to `llama-server`). Loads GGUF + optional LoRA. Exposes an OpenAI-compatible local endpoint used by the chat preview and the eval worker. Phase 4.6 adds 8 GB-oriented serving levers: KV-cache quantization (`q8_0` default) and prompt-prefix caching — see `docs/quantization.md → Phase 4.6`.
 - **`rag`** — LlamaIndex + LanceDB (embedded, file-backed, no service). BGE-small as default embedding model. Optional BGE-reranker-base.
 - **`eval`** — auto path: held-out chunks → synthesize Q&A via base model → run candidate models → LLM-judge scoring. Manual path: serves comparison samples to the UI. Standard path: optional `lm-evaluation-harness` integration for benchmarks.
-- **`export`** — GGUF conversion via vendored `convert_hf_to_gguf.py`, quantization (Q4_K_M default, Q5_K_M, Q8_0), Ollama `Modelfile` generation.
+- **`export`** — GGUF conversion via vendored `convert_hf_to_gguf.py`, quantization (Q4_K_M default, Q5_K_M, Q8_0), Ollama `Modelfile` generation. The merge→convert→quantize (incl. domain imatrix) steps land in **Phase 4.6**, superseding the Phase 4 KARAR 8 "no GGUF" deferral; Phase 6 reuses that GGUF for packaging.
 
 ### 5. SDK (`packages/sdk-js`)
 
