@@ -210,14 +210,25 @@ def serve_stdio(registry: MethodRegistry) -> None:
     os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
     os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
 
-    # CRITICAL on Windows: default sys.stdout/sys.stderr encoding follows the system
-    # locale (cp1252 on a Turkish/Western Windows install), not UTF-8. When the rag
-    # worker writes JSON with `ensure_ascii=False`, Unicode chunk text containing
-    # em dashes, smart quotes, accented characters, etc. gets encoded as cp1252 —
-    # which produces single-byte values like 0x97 that the Rust BufReader (strict
-    # UTF-8) chokes on with "stream did not contain valid UTF-8". This wasted ~an
-    # hour in Phase 3 acceptance because the broken byte was past the first 400
-    # bytes that early hex dumps showed. Always reconfigure to UTF-8 before serving.
+    # CRITICAL on Windows: default sys.stdin/stdout/stderr encoding follows the
+    # system locale (cp1252 on a Turkish/Western Windows install), not UTF-8.
+    #
+    # OUTBOUND: when the rag worker writes JSON with `ensure_ascii=False`, Unicode
+    # chunk text (em dashes, smart quotes, accented characters) gets encoded as
+    # cp1252 — single-byte values like 0x97 that the Rust BufReader (strict UTF-8)
+    # chokes on with "stream did not contain valid UTF-8". This wasted ~an hour in
+    # Phase 3 acceptance because the broken byte was past the first 400 bytes early
+    # hex dumps showed.
+    #
+    # INBOUND: the orchestrator sends request params (e.g. project_root) as UTF-8
+    # JSON. If stdin decodes them as cp1252, a non-ASCII path like
+    # `…\Masaüstü\…` arrives as mojibake (`…\MasaÃ¼stÃ¼\…`) and the handler fails
+    # with "project_root is not a directory". Triggered the moment
+    # NARROWMIND_PROJECTS_ROOT pointed at a path with a non-ASCII character.
+    #
+    # Reconfigure all three to UTF-8 before serving.
+    if hasattr(sys.stdin, "reconfigure"):
+        sys.stdin.reconfigure(encoding="utf-8", errors="strict")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="strict")
     if hasattr(sys.stderr, "reconfigure"):
