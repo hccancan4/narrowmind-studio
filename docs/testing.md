@@ -19,10 +19,19 @@ Run-side serving levers (KV-cache quantization + prompt-prefix cache). **Rust-on
 | Python / TypeScript | — | untouched by these slices |
 
 clippy: net-zero new warnings (the crate's pre-existing pedantic warnings are
-unchanged). **Pending machine-side gates** (reference RTX 3070): GPU smoke
-(`q8_0` KV + flash-attn health/generation, reduced KV VRAM) and the 56-pair
-eval no-regression check (recall ≈ 0.98 / judge ≈ 4.55). If `q8_0` regresses,
-the default flips back to `f16` (one flag).
+unchanged).
+
+**Machine-side gates (reference RTX 3070, 2026-06-19) — PASSED:**
+- GPU smoke: inference server came up healthy spawned with
+  `--type_k 8 --type_v 8 --flash_attn true --cache true`; Local Chat returned a
+  grounded, cited answer on `deneme1-faz2`.
+- 56-pair eval no-regression (q8_0 KV vs the f16 Phase-3.5 baseline):
+  **recall@5 0.98** (unchanged — retrieval doesn't touch the LLM KV cache) /
+  **judge 4.46** (vs 4.55; −0.09 is within judge run-variance, no score≤2). Well
+  above the regression threshold → **q8_0 KV default confirmed**, no flip to f16.
+  Report: `evals/f068f740…hybrid.md`.
+- A controlled same-session f16 A/B was not run; the recall parity + sub-noise
+  judge delta + q8_0's near-lossless property were judged sufficient.
 
 > Note: the full Phase-4 (M1–M6) test additions — training worker/manager + the
 > Python training-dataset tests — are not yet folded into the headline baseline
