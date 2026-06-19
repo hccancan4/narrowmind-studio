@@ -21,6 +21,7 @@ from narrowmind_workers.rpc import JsonRpcError, MethodRegistry, error_codes
 from narrowmind_workers.training.config import TrainingParams
 from narrowmind_workers.training.runner import (
     append_log,
+    execute_export_gguf,
     execute_test_adapter,
     execute_training,
     run_dir,
@@ -33,6 +34,7 @@ log = logging.getLogger(__name__)
 def register_methods(registry: MethodRegistry) -> None:
     registry.register("training.run", _run)
     registry.register("training.test_adapter", _test_adapter)
+    registry.register("training.export_gguf", _export_gguf)
 
 
 def _run(params: dict[str, Any]) -> dict[str, Any]:
@@ -78,6 +80,23 @@ def _test_adapter(params: dict[str, Any]) -> dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         log.error("training.test_adapter failed: %s\n%s", e, traceback.format_exc())
         raise JsonRpcError(error_codes.INTERNAL_ERROR, f"test_adapter failed: {e}") from e
+
+
+def _export_gguf(params: dict[str, Any]) -> dict[str, Any]:
+    project_root = _required_dir(params, "project_root")
+    run_id = _required_str(params, "run_id")
+    quant = params.get("quant", "Q4_K_M")
+    if not isinstance(quant, str) or not quant:
+        raise JsonRpcError(error_codes.INVALID_PARAMS, "`quant` must be a non-empty string")
+    domain = params.get("domain")
+    if domain is not None and (not isinstance(domain, str) or not domain):
+        raise JsonRpcError(error_codes.INVALID_PARAMS, "`domain` must be a non-empty string")
+
+    try:
+        return execute_export_gguf(project_root, run_id, quant=quant, domain=domain)
+    except Exception as e:  # noqa: BLE001
+        log.error("training.export_gguf failed: %s\n%s", e, traceback.format_exc())
+        raise JsonRpcError(error_codes.INTERNAL_ERROR, f"export_gguf failed: {e}") from e
 
 
 def _required_str(params: dict[str, Any], key: str) -> str:

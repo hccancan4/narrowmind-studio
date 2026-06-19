@@ -20,6 +20,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -69,6 +72,38 @@ def resolve_target_modules(spec: str) -> list[str]:
     if spec == "all-linear":
         return list(ALL_LINEAR_MODULES)
     return [m.strip() for m in spec.split(",") if m.strip()]
+
+
+# ---------------------------------------------------------------------------
+# Domain-GGUF export path helpers (pure, testable) — Phase 4.6 slice 3
+# ---------------------------------------------------------------------------
+
+
+def slugify_domain(name: str) -> str:
+    """Filesystem-safe domain slug for a GGUF filename. Lowercase, [a-z0-9-_],
+    other runs collapsed to a single '-'."""
+    out: list[str] = []
+    for ch in name.lower():
+        out.append(ch if (ch.isalnum() or ch in "-_") else "-")
+    slug = "".join(out).strip("-")
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug or "domain"
+
+
+def domain_gguf_path(project_root: Path, domain: str, quant: str) -> Path:
+    """Where a domain GGUF lands: ``<project>/models/<slug>-<quant>.gguf``.
+    One GGUF per domain, managed as files (Phase 4.6 — replaces runtime
+    multi-LoRA paging)."""
+    return project_root / "models" / f"{slugify_domain(domain)}-{quant.lower()}.gguf"
+
+
+def llama_cpp_dir() -> Path:
+    """Root of the vendored llama.cpp build (convert script + binaries). Set
+    ``LLAMA_CPP_DIR`` in run-worker.sh; defaults to ``~/llama.cpp`` (built once
+    in WSL — see docs/dev-setup.md)."""
+    env = os.environ.get("LLAMA_CPP_DIR")
+    return Path(env) if env else (Path.home() / "llama.cpp")
 
 
 # ---------------------------------------------------------------------------
@@ -371,3 +406,117 @@ def execute_test_adapter(
         notify("training.adapter_answer", {"index": i, "of": len(questions), "question": q})
 
     return {"run_id": run_id, "answers": answers}
+
+
+# ---------------------------------------------------------------------------
+# Domain-GGUF export (Phase 4.6 slice 3): merge adapter -> GGUF -> quantize
+# ---------------------------------------------------------------------------
+
+
+def _run_export_cmd(
+    cmd: list[str], *, cwd: Path | None = None, extra_pythonpath: str | None = None
+) -> None:
+    """Run a llama.cpp subprocess (convert / quantize). On non-zero exit, raise
+    RuntimeError with the last 15 stderr lines so the failure is actionable."""
+    env = dict(os.environ)
+    if extra_pythonpath:
+        env["PYTHONPATH"] = extra_pythonpath + os.pathsep + env.get("PYTHONPATH", "")
+    proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
+        cmd,
+        cwd=str(cwd) if cwd else None,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if proc.returncode != 0:
+        tail = "\n".join((proc.stderr or proc.stdout or "").splitlines()[-15:])
+        raise RuntimeError(f"`{Path(cmd[0]).name}` exited {proc.returncode}:\n{tail}")
+
+
+def execute_export_gguf(
+    project_root: Path,
+    run_id: str,
+    quant: str = "Q4_K_M",
+    domain: str | None = None,
+) -> dict[str, Any]:
+    """Merge the run's LoRA adapter into its base and produce ONE quantized
+    domain GGUF the llama.cpp inference server can load.
+
+    Stages (heavy intermediates on WSL ext4 staging, never the OneDrive project
+    dir):
+      1. Unsloth ``save_pretrained_merged(merged_16bit)``: adapter+base -> 16-bit HF.
+      2. ``convert_hf_to_gguf.py`` -> f16 GGUF.
+      3. ``llama-quantize`` -> <quant> -> ``project/models/<slug>-<quant>.gguf``.
+
+    Slice 4 swaps step 3 for a domain-imatrix-calibrated quant. The VRAM mutex
+    (stop the inference server first) is the caller's job, like training."""
+    rd = run_dir(project_root, run_id)
+    adapter_dir = rd / "adapter"
+    if not adapter_dir.is_dir():
+        raise ValueError(f"no adapter at {adapter_dir} — run training first")
+    domain = domain or project_root.name
+
+    llama = llama_cpp_dir()
+    convert_py = llama / "convert_hf_to_gguf.py"
+    quantize_bin = llama / "build" / "bin" / "llama-quantize"
+    gguf_py = llama / "gguf-py"
+    for p in (convert_py, quantize_bin):
+        if not p.exists():
+            raise ValueError(
+                f"llama.cpp artifact missing: {p}. Build it once in WSL "
+                "(docs/dev-setup.md) or set LLAMA_CPP_DIR."
+            )
+
+    staging_root = Path(
+        os.environ.get("NM_EXPORT_STAGING", str(Path.home() / ".cache" / "narrowmind-export"))
+    )
+    stage = staging_root / run_id
+    merged_dir = stage / "merged"
+    f16_gguf = stage / "f16.gguf"
+    out = domain_gguf_path(project_root, domain, quant)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    merged_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # 1) merge adapter into base -> 16-bit HF (CPU-offloaded on an 8 GB card).
+        notify("export.stage", {"stage": "merging", "adapter": str(adapter_dir)})
+        append_log(rd, f"export: merging adapter -> 16-bit HF ({merged_dir})")
+        from unsloth import FastLanguageModel  # noqa: PLC0415
+
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=str(adapter_dir), max_seq_length=2048, load_in_4bit=True, dtype=None
+        )
+        model.save_pretrained_merged(str(merged_dir), tokenizer, save_method="merged_16bit")
+
+        # 2) HF -> f16 GGUF
+        notify("export.stage", {"stage": "converting"})
+        append_log(rd, "export: convert_hf_to_gguf -> f16 GGUF")
+        _run_export_cmd(
+            [
+                sys.executable, str(convert_py), str(merged_dir),
+                "--outfile", str(f16_gguf), "--outtype", "f16",
+            ],
+            cwd=llama,
+            extra_pythonpath=str(gguf_py),
+        )
+
+        # 3) quantize -> project models/
+        notify("export.stage", {"stage": "quantizing", "quant": quant})
+        append_log(rd, f"export: quantize {quant} -> {out}")
+        _run_export_cmd([str(quantize_bin), str(f16_gguf), str(out), quant])
+
+        size_mb = out.stat().st_size // (1024 * 1024)
+        append_log(rd, f"export: done -> {out} ({size_mb} MB)")
+        notify("export.stage", {"stage": "done", "path": str(out), "size_mb": size_mb})
+        return {
+            "run_id": run_id,
+            "domain": slugify_domain(domain),
+            "quant": quant,
+            "gguf_path": str(out),
+            "size_mb": size_mb,
+        }
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)  # reclaim ~30 GB of intermediates

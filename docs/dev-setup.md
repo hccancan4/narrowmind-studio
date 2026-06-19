@@ -189,6 +189,37 @@ pnpm --filter @narrowmind/desktop tauri dev
 
 ---
 
+## llama.cpp build for GGUF export (Phase 4.6)
+
+The produce→GGUF path (merge adapter → GGUF → quantize, and the domain-imatrix
+quant in slice 4) needs llama.cpp's `convert_hf_to_gguf.py` + `llama-quantize`
++ `llama-imatrix`. These are **not** in the `llama-cpp-python` wheel, so we
+build them once in WSL (CPU build is enough — quantize/imatrix don't need CUDA;
+imatrix over a small domain corpus runs fine on CPU):
+
+```bash
+# inside WSL — cmake via uv avoids a sudo apt install
+uv tool install cmake
+git clone --depth 1 https://github.com/ggml-org/llama.cpp ~/llama.cpp
+cd ~/llama.cpp
+cmake -B build -DGGML_CUDA=OFF -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j"$(nproc)" --target llama-quantize llama-imatrix
+```
+
+The export worker finds these via `LLAMA_CPP_DIR` (defaults to `~/llama.cpp`).
+`convert_hf_to_gguf.py` runs under the py-training interpreter with `PYTHONPATH`
+pointed at `~/llama.cpp/gguf-py`.
+
+### Why intermediates live on ext4, not the project dir
+
+A 7B LoRA merged to 16-bit HF is ~15 GB, and the f16 GGUF another ~15 GB. The
+export stages both under `~/.cache/narrowmind-export/<run_id>/` (ext4) and
+deletes them when done — the project dir is under OneDrive, and 30 GB of
+transient blobs there would be brutal to sync. Only the final quantized GGUF
+(~4.4 GB at Q4_K_M) lands at `projects/<name>/models/<slug>-<quant>.gguf`.
+
+---
+
 ## Worker stdio is strict UTF-8
 
 The Python workers communicate with the Rust orchestrator over JSON-RPC on stdin/stdout. **Windows defaults `sys.stdout` encoding to the system locale (cp1252)**, not UTF-8. Wikipedia chunks contain em dashes, smart quotes, and accented letters; writing them with `json.dumps(ensure_ascii=False)` against a cp1252 stream produces single-byte values like `0x97` that the Rust `BufReader::read_line` rejects as `stream did not contain valid UTF-8`.

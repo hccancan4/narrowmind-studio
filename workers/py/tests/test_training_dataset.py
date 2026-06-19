@@ -21,8 +21,11 @@ from narrowmind_workers.training.runner import (
     ALL_LINEAR_MODULES,
     _latest_checkpoint,
     append_metric,
+    domain_gguf_path,
+    llama_cpp_dir,
     resolve_target_modules,
     run_dir,
+    slugify_domain,
     write_status,
 )
 
@@ -99,6 +102,35 @@ def test_resolve_target_modules_expands_all_linear() -> None:
     assert resolve_target_modules("q_proj") == ["q_proj"]
     # the result is always a list (the type PEFT needs), never a str
     assert isinstance(resolve_target_modules("all-linear"), list)
+
+
+# ---------------------------------------------------------------------------
+# domain-GGUF export path helpers (Phase 4.6 slice 3)
+# ---------------------------------------------------------------------------
+
+
+def test_slugify_domain() -> None:
+    assert slugify_domain("deneme1-faz2") == "deneme1-faz2"
+    assert slugify_domain("Nous Philosophy!") == "nous-philosophy"
+    assert slugify_domain("a / b \\ c") == "a-b-c"
+    assert slugify_domain("--weird--") == "weird"
+    assert slugify_domain("ALLCAPS") == "allcaps"
+    assert slugify_domain("") == "domain"  # never empty -> always a valid filename
+
+
+def test_domain_gguf_path(tmp_path: Path) -> None:
+    p = domain_gguf_path(tmp_path, "Nous Philosophy", "Q4_K_M")
+    assert p == tmp_path / "models" / "nous-philosophy-q4_k_m.gguf"
+    assert p.parent.name == "models"
+    # one GGUF per (domain, quant) — distinct quants don't collide
+    assert domain_gguf_path(tmp_path, "d", "Q4_K_M") != domain_gguf_path(tmp_path, "d", "Q8_0")
+
+
+def test_llama_cpp_dir_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLAMA_CPP_DIR", "/opt/llama.cpp")
+    assert llama_cpp_dir() == Path("/opt/llama.cpp")
+    monkeypatch.delenv("LLAMA_CPP_DIR", raising=False)
+    assert llama_cpp_dir().name == "llama.cpp"  # default ~/llama.cpp
 
 
 # ---------------------------------------------------------------------------
