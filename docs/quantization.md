@@ -98,17 +98,21 @@ lowest-risk part of the tier. Configured on `ModelSpec` (defaults in
   host-RAM prompt cache so the shared system prompt + repeated RAG context
   aren't re-evaluated every request. No VRAM cost (`cache_type=ram`).
 
-### Produce side — export is PTQ (planned, pulled forward)
+### Produce side — export is PTQ (shipped)
 
 - **Our export is PTQ.** After a LoRA merge (PyTorch / py-training env), we
-  quantize the merged weights with llama.cpp's standard pipeline. That is the
-  right tool: our fine-tunes start from instruct checkpoints and train
-  adapters for minutes-to-hours; nobody is re-running pretraining.
-- **Domain-calibrated imatrix.** Unlike the upstream bartowski PTQ (calibrated
-  on a generic corpus), our export uses the *project's own* corpus
-  (`datasets/rag.jsonl`) as the `llama-imatrix` calibration set, so pushing to
-  low bits (Q4_K_M default, IQ4_XS / IQ3 for headroom) preserves
-  domain-relevant weights. Output stays GGUF; no PyTorch on the run side.
+  quantize the merged weights with llama.cpp's standard pipeline
+  (`export_domain_gguf`, Q4_K_M default). That is the right tool: our fine-tunes
+  start from instruct checkpoints and train adapters for minutes-to-hours;
+  nobody is re-running pretraining.
+- **Domain-calibrated imatrix** (`export_domain_gguf imatrix=true`). Unlike the
+  upstream bartowski PTQ (calibrated on a generic corpus), our export can use
+  the *project's own* corpus (`datasets/rag.jsonl`) as the `llama-imatrix`
+  calibration set, so pushing to low bits (IQ4_XS / IQ3, which **need** an
+  imatrix) preserves domain-relevant weights. Off by default because it runs the
+  model over the corpus on CPU (our llama.cpp build is CPU-only — no nvcc in
+  WSL) and is slow; opt in when you want the best low-bit quality. Output stays
+  GGUF; no PyTorch on the run side.
 - **One GGUF per domain, managed as files** (`projects/<name>/models/*.gguf`).
   The single-user path is merge→one GGUF per domain and load the one needed —
   this *replaces* any runtime multi-LoRA adapter paging (explicitly out of

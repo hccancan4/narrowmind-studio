@@ -21,6 +21,7 @@ from narrowmind_workers.training.runner import (
     ALL_LINEAR_MODULES,
     _latest_checkpoint,
     append_metric,
+    domain_calibration_corpus,
     domain_gguf_path,
     llama_cpp_dir,
     resolve_target_modules,
@@ -131,6 +132,24 @@ def test_llama_cpp_dir_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     assert llama_cpp_dir() == Path("/opt/llama.cpp")
     monkeypatch.delenv("LLAMA_CPP_DIR", raising=False)
     assert llama_cpp_dir().name == "llama.cpp"  # default ~/llama.cpp
+
+
+def test_domain_calibration_corpus(tmp_path: Path) -> None:
+    ds = tmp_path / "datasets"
+    ds.mkdir()
+    (ds / "rag.jsonl").write_text(
+        '{"chunk_id":"c1","text":"Philosophy of mind."}\n'
+        "not json — skipped\n"
+        '{"chunk_id":"c2","text":""}\n'  # empty text -> skipped
+        '{"chunk_id":"c3","text":"Qualia and consciousness."}\n',
+        encoding="utf-8",
+    )
+    corpus = domain_calibration_corpus(tmp_path)
+    assert corpus == "Philosophy of mind.\n\nQualia and consciousness."
+    # max_chunks caps the calibration set
+    assert domain_calibration_corpus(tmp_path, max_chunks=1) == "Philosophy of mind."
+    # missing rag.jsonl -> empty (imatrix step skips cleanly)
+    assert domain_calibration_corpus(tmp_path / "nope") == ""
 
 
 # ---------------------------------------------------------------------------

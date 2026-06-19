@@ -91,9 +91,22 @@ def _export_gguf(params: dict[str, Any]) -> dict[str, Any]:
     domain = params.get("domain")
     if domain is not None and (not isinstance(domain, str) or not domain):
         raise JsonRpcError(error_codes.INVALID_PARAMS, "`domain` must be a non-empty string")
+    imatrix = bool(params.get("imatrix", False))
+    imatrix_chunks = params.get("imatrix_chunks", 80)
+    if not isinstance(imatrix_chunks, int) or not (1 <= imatrix_chunks <= 1000):
+        raise JsonRpcError(
+            error_codes.INVALID_PARAMS, "`imatrix_chunks` must be an int in [1, 1000]"
+        )
 
     try:
-        return execute_export_gguf(project_root, run_id, quant=quant, domain=domain)
+        return execute_export_gguf(
+            project_root,
+            run_id,
+            quant=quant,
+            domain=domain,
+            imatrix=imatrix,
+            imatrix_chunks=imatrix_chunks,
+        )
     except Exception as e:  # noqa: BLE001
         log.error("training.export_gguf failed: %s\n%s", e, traceback.format_exc())
         raise JsonRpcError(error_codes.INTERNAL_ERROR, f"export_gguf failed: {e}") from e

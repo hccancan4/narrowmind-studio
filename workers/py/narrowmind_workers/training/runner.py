@@ -436,11 +436,38 @@ def _run_export_cmd(
         raise RuntimeError(f"`{Path(cmd[0]).name}` exited {proc.returncode}:\n{tail}")
 
 
+def domain_calibration_corpus(project_root: Path, max_chunks: int = 0) -> str:
+    """Concatenate the project's RAG chunk texts (``datasets/rag.jsonl``) into a
+    plain-text calibration corpus for ``llama-imatrix`` — the domain-specific
+    importance-matrix calibration set (Phase 4.6 slice 4). Empty string when
+    there's no rag.jsonl. ``max_chunks`` 0 = use every chunk."""
+    rag = project_root / "datasets" / "rag.jsonl"
+    if not rag.is_file():
+        return ""
+    texts: list[str] = []
+    for line in rag.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        text = obj.get("text")
+        if isinstance(text, str) and text.strip():
+            texts.append(text.strip())
+            if max_chunks and len(texts) >= max_chunks:
+                break
+    return "\n\n".join(texts)
+
+
 def execute_export_gguf(
     project_root: Path,
     run_id: str,
     quant: str = "Q4_K_M",
     domain: str | None = None,
+    imatrix: bool = False,
+    imatrix_chunks: int = 80,
 ) -> dict[str, Any]:
     """Merge the run's LoRA adapter into its base and produce ONE quantized
     domain GGUF the llama.cpp inference server can load.
@@ -449,10 +476,14 @@ def execute_export_gguf(
     dir):
       1. Unsloth ``save_pretrained_merged(merged_16bit)``: adapter+base -> 16-bit HF.
       2. ``convert_hf_to_gguf.py`` -> f16 GGUF.
-      3. ``llama-quantize`` -> <quant> -> ``project/models/<slug>-<quant>.gguf``.
+      2.5 (slice 4, ``imatrix=True``): ``llama-imatrix`` over the project's RAG
+          corpus -> a domain importance matrix, so low-bit quants preserve
+          domain-relevant weights (and IQ3/IQ4 quants, which need an imatrix,
+          become usable). CPU-bound and slow — opt-in.
+      3. ``llama-quantize`` [--imatrix] -> <quant> ->
+         ``project/models/<slug>-<quant>.gguf``.
 
-    Slice 4 swaps step 3 for a domain-imatrix-calibrated quant. The VRAM mutex
-    (stop the inference server first) is the caller's job, like training."""
+    The VRAM mutex (stop the inference server first) is the caller's job."""
     rd = run_dir(project_root, run_id)
     adapter_dir = rd / "adapter"
     if not adapter_dir.is_dir():
@@ -462,8 +493,10 @@ def execute_export_gguf(
     llama = llama_cpp_dir()
     convert_py = llama / "convert_hf_to_gguf.py"
     quantize_bin = llama / "build" / "bin" / "llama-quantize"
+    imatrix_bin = llama / "build" / "bin" / "llama-imatrix"
     gguf_py = llama / "gguf-py"
-    for p in (convert_py, quantize_bin):
+    required = [convert_py, quantize_bin] + ([imatrix_bin] if imatrix else [])
+    for p in required:
         if not p.exists():
             raise ValueError(
                 f"llama.cpp artifact missing: {p}. Build it once in WSL "
@@ -503,13 +536,42 @@ def execute_export_gguf(
             extra_pythonpath=str(gguf_py),
         )
 
+        # 2.5) domain imatrix (slice 4): calibrate on the project's RAG corpus.
+        imatrix_file: Path | None = None
+        if imatrix:
+            corpus = domain_calibration_corpus(project_root)
+            if corpus.strip():
+                calib = stage / "calib.txt"
+                calib.write_text(corpus, encoding="utf-8")
+                imatrix_file = stage / "imatrix.gguf"
+                notify("export.stage", {"stage": "imatrix", "chunks": imatrix_chunks})
+                append_log(
+                    rd,
+                    f"export: domain imatrix — llama-imatrix over rag.jsonl "
+                    f"({imatrix_chunks} chunks, CPU, slow)",
+                )
+                _run_export_cmd([
+                    str(imatrix_bin),
+                    "-m", str(f16_gguf),
+                    "-f", str(calib),
+                    "-o", str(imatrix_file),
+                    "--chunks", str(imatrix_chunks),
+                ])
+            else:
+                append_log(rd, "export: no datasets/rag.jsonl corpus — skipping imatrix")
+
         # 3) quantize -> project models/
         notify("export.stage", {"stage": "quantizing", "quant": quant})
         append_log(rd, f"export: quantize {quant} -> {out}")
-        _run_export_cmd([str(quantize_bin), str(f16_gguf), str(out), quant])
+        qcmd = [str(quantize_bin)]
+        if imatrix_file is not None and imatrix_file.is_file():
+            qcmd += ["--imatrix", str(imatrix_file)]
+        qcmd += [str(f16_gguf), str(out), quant]
+        _run_export_cmd(qcmd)
 
         size_mb = out.stat().st_size // (1024 * 1024)
-        append_log(rd, f"export: done -> {out} ({size_mb} MB)")
+        used_imatrix = imatrix_file is not None and imatrix_file.is_file()
+        append_log(rd, f"export: done -> {out} ({size_mb} MB, imatrix={used_imatrix})")
         notify("export.stage", {"stage": "done", "path": str(out), "size_mb": size_mb})
         return {
             "run_id": run_id,
@@ -517,6 +579,7 @@ def execute_export_gguf(
             "quant": quant,
             "gguf_path": str(out),
             "size_mb": size_mb,
+            "imatrix": used_imatrix,
         }
     finally:
         shutil.rmtree(stage, ignore_errors=True)  # reclaim ~30 GB of intermediates

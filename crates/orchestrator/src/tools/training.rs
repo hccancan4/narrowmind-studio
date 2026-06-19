@@ -481,6 +481,38 @@ struct ExportGgufArgs {
     /// GGUF filename slug; defaults to the project name.
     #[serde(default)]
     domain: Option<String>,
+    /// Domain-calibrated imatrix (slice 4): calibrate the quant on the project's
+    /// RAG corpus for better low-bit quality (and to enable IQ3/IQ4). CPU-bound
+    /// and slow — off by default.
+    #[serde(default)]
+    imatrix: Option<bool>,
+    /// imatrix calibration chunks (default 80).
+    #[serde(default)]
+    imatrix_chunks: Option<u32>,
+}
+
+/// Build the `training.export_gguf` worker params (split out to keep `invoke` lean).
+fn export_gguf_params(
+    project_root: &std::path::Path,
+    run_id: &str,
+    quant: &str,
+    domain: Option<&str>,
+    imatrix: bool,
+    imatrix_chunks: Option<u32>,
+) -> Value {
+    let mut params = json!({
+        "project_root": wsl::to_wsl_path(project_root),
+        "run_id": run_id,
+        "quant": quant,
+        "imatrix": imatrix,
+    });
+    if let Some(d) = domain {
+        params["domain"] = json!(d);
+    }
+    if let Some(c) = imatrix_chunks {
+        params["imatrix_chunks"] = json!(c);
+    }
+    params
 }
 
 pub struct ExportDomainGguf;
@@ -495,14 +527,18 @@ impl Tool for ExportDomainGguf {
                           the llama.cpp server loads to serve your fine-tune. Runs the merge in the \
                           WSL training env, then convert + quantize via the vendored llama.cpp \
                           build; the ~15 GB 16-bit/f16 intermediates stage on ext4 and are removed. \
-                          VRAM hard mutex applies. Slow (several minutes for a 7B merge + convert)."
+                          VRAM hard mutex applies. Slow (several minutes for a 7B merge + convert). \
+                          Set imatrix=true to calibrate the quant on the project's RAG corpus for \
+                          better low-bit quality (enables IQ3/IQ4) — CPU-bound and much slower."
                 .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "run_id": { "type": "string", "description": "Defaults to [training] last_run_id." },
-                    "quant":  { "type": "string", "default": "Q4_K_M", "description": "llama-quantize type, e.g. Q4_K_M, Q5_K_M, Q8_0." },
-                    "domain": { "type": "string", "description": "GGUF filename slug; defaults to the project name." }
+                    "quant":  { "type": "string", "default": "Q4_K_M", "description": "llama-quantize type, e.g. Q4_K_M, Q5_K_M, Q8_0, or (with imatrix) IQ4_XS / IQ3_M." },
+                    "domain": { "type": "string", "description": "GGUF filename slug; defaults to the project name." },
+                    "imatrix": { "type": "boolean", "default": false, "description": "Domain-calibrated imatrix quantization (slice 4). Better low-bit quality; needed for IQ3/IQ4. CPU-bound, slow." },
+                    "imatrix_chunks": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 80, "description": "Calibration chunks for llama-imatrix. Fewer = faster, less calibrated." }
                 }
             }),
         }
@@ -570,27 +606,29 @@ impl Tool for ExportDomainGguf {
 
         let (_, cancel_rx) = tokio::sync::watch::channel(false);
         let events = ctx.events.clone();
-        let mut params = json!({
-            "project_root": wsl::to_wsl_path(&project.root),
-            "run_id": run_id,
-            "quant": quant.clone(),
-        });
-        if let Some(domain) = args.domain {
-            params["domain"] = json!(domain);
-        }
+        let use_imatrix = args.imatrix == Some(true);
+        let params = export_gguf_params(
+            &project.root,
+            &run_id,
+            &quant,
+            args.domain.as_deref(),
+            use_imatrix,
+            args.imatrix_chunks,
+        );
         let cmd = crate::worker::WorkerCommand {
             module: "narrowmind_workers.training".into(),
             method: "training.export_gguf".into(),
             params,
             timeout: None,
         };
-        // Stages (merge → convert → quantize) each notify, refreshing the
-        // deadline; within a stage a ~15 GB write can stay silent for minutes,
-        // so the idle window is generous.
+        // Stages each notify, refreshing the deadline; within a stage a ~15 GB
+        // write — or, with imatrix, a long silent CPU calibration run — can stay
+        // quiet for a while, so the idle window is generous (an hour for imatrix).
+        let idle_secs = if use_imatrix { 3600 } else { 1800 };
         let value = crate::worker::call_worker_streaming(
             runner,
             &cmd,
-            std::time::Duration::from_secs(1800),
+            std::time::Duration::from_secs(idle_secs),
             cancel_rx,
             move |method, p| {
                 if method == "export.stage" {
@@ -610,10 +648,11 @@ impl Tool for ExportDomainGguf {
 
         let gguf_path = value.get("gguf_path").and_then(Value::as_str).unwrap_or("?");
         let size_mb = value.get("size_mb").and_then(Value::as_u64).unwrap_or(0);
-        info!(gguf = %gguf_path, size_mb, quant = %quant, "export_domain_gguf");
+        let imatrix_used = value.get("imatrix").and_then(Value::as_bool).unwrap_or(false);
+        info!(gguf = %gguf_path, size_mb, quant = %quant, imatrix = imatrix_used, "export_domain_gguf");
         Ok(ToolResult::text(format!(
-            "exported domain GGUF: {gguf_path} ({size_mb} MB, {quant}). Load it with \
-             start_inference_server (filename set to this path), or see list_domain_models. \
+            "exported domain GGUF: {gguf_path} ({size_mb} MB, {quant}, imatrix={imatrix_used}). Load \
+             it with start_inference_server (filename set to this path), or see list_domain_models. \
              Inference server was stopped for VRAM."
         ))
         .with_structured(value))
