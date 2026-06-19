@@ -24,7 +24,7 @@
 
 use serde::Serialize;
 
-use crate::inference::ModelSpec;
+use crate::inference::{KvCacheType, ModelSpec};
 
 /// Serving context window passed to llama.cpp regardless of what the model
 /// could address. 4096 keeps the KV cache inside an 8 GB card next to 7-12B
@@ -32,6 +32,14 @@ use crate::inference::ModelSpec;
 /// `n_ctx` arg), not a registry property — [`BaseModel::context_window`]
 /// records what the model *supports*, this constant records what we *spawn*.
 pub const SERVING_N_CTX: u32 = 4096;
+
+/// KV-cache quantization spawned by default on the 8 GB reference card
+/// (Phase 4.6 efficiency Tier 1). `Q8_0` is near-lossless and roughly halves KV
+/// memory vs f16, freeing VRAM for longer RAG context next to the Q4 weights.
+/// Like [`SERVING_N_CTX`] this is what we *spawn*, overridable per call via
+/// `start_inference_server`'s `kv_cache_type` arg; `f16` is the exact-baseline
+/// opt-out.
+pub const SERVING_KV_CACHE: KvCacheType = KvCacheType::Q8_0;
 
 /// Chat-template family the model's GGUF embeds. Informational for Phase 4
 /// dataset formatting (the llama.cpp server applies the GGUF's own embedded
@@ -111,6 +119,10 @@ impl BaseModel {
             filename: self.gguf_file.to_string(),
             n_ctx: SERVING_N_CTX,
             n_gpu_layers: -1,
+            // Phase 4.6: quantize the KV cache by default for the 8 GB band.
+            kv_cache_type: SERVING_KV_CACHE,
+            // Forced on by the quantized cache; not an independent default.
+            flash_attn: false,
         }
     }
 }
@@ -215,7 +227,9 @@ mod tests {
 
     /// THE pinning test: the registry-backed default must be byte-identical
     /// to the literals `ModelSpec::default_qwen2_5_7b_q4km()` carried before
-    /// the refactor. If this fails, the refactor changed serving behavior.
+    /// the registry refactor. If the first four fail, the refactor changed
+    /// serving behavior. The KV fields are a deliberate Phase 4.6 addition
+    /// (Q8_0 by default) — pinned here so a future edit can't silently drift them.
     #[test]
     fn default_model_spec_matches_pre_registry_literals() {
         let spec = default_model().to_model_spec();
@@ -223,6 +237,8 @@ mod tests {
         assert_eq!(spec.filename, "Qwen2.5-7B-Instruct-Q4_K_M.gguf");
         assert_eq!(spec.n_ctx, 4096);
         assert_eq!(spec.n_gpu_layers, -1);
+        assert_eq!(spec.kv_cache_type, KvCacheType::Q8_0);
+        assert!(!spec.flash_attn);
     }
 
     /// And the legacy constructor itself must produce the same thing — it now
@@ -232,10 +248,7 @@ mod tests {
     fn legacy_constructor_delegates_unchanged() {
         let legacy = ModelSpec::default_qwen2_5_7b_q4km();
         let registry = default_model().to_model_spec();
-        assert_eq!(legacy.repo_id, registry.repo_id);
-        assert_eq!(legacy.filename, registry.filename);
-        assert_eq!(legacy.n_ctx, registry.n_ctx);
-        assert_eq!(legacy.n_gpu_layers, registry.n_gpu_layers);
+        assert_eq!(legacy, registry);
     }
 
     #[test]

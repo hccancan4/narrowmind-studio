@@ -22,7 +22,7 @@ pub use app_paths::{app_data_root, hf_cache_dir, hf_cache_env, AppPathError};
 pub use error::WorkerError;
 pub use hello::{hello_round_trip, HelloResult};
 pub use inference::{
-    InferenceError, InferenceManager, InferenceStatus, ModelSpec,
+    InferenceError, InferenceManager, InferenceStatus, KvCacheType, ModelSpec,
     DEFAULT_PORT as INFERENCE_DEFAULT_PORT, IDLE_TTL as INFERENCE_IDLE_TTL,
 };
 pub use models::{BaseModel, ChatTemplateFormat, VramProfile};

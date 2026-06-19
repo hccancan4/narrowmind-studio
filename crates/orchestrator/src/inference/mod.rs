@@ -31,6 +31,75 @@ const STARTUP_HEALTH_TIMEOUT: Duration = crate::retry::timeouts::INFERENCE_START
 /// Idle TTL — after this much time with no `mark_used()`, the server is killed.
 pub const IDLE_TTL: Duration = Duration::from_secs(10 * 60);
 
+/// KV-cache quantization for the llama.cpp server (Phase 4.6 efficiency Tier 1).
+///
+/// On the 8 GB reference card the K/V cache competes with the `Q4` weights for
+/// VRAM; quantizing it frees room so longer RAG context (chunks, system prompt,
+/// query) fits. `Q8_0` is near-lossless and roughly halves KV memory vs `F16` —
+/// the default for the band. `F16` is the exact-baseline opt-out; `Q4_0` is the
+/// aggressive opt-in (more headroom, measurable quality risk on a model already
+/// at `Q4_K_M` weights).
+///
+/// The wire values are the ggml type ids llama-cpp-python's `--type_k` / `--type_v`
+/// expect (GGML ABI: `F16`=1, `Q4_0`=2, `Q8_0`=8). We only emit the flags for the
+/// quantized variants; `F16` leaves the server on its built-in default so the
+/// opt-out is byte-for-byte the pre-4.6 serving behavior.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum KvCacheType {
+    /// Full-precision KV cache (llama.cpp default). Opt-out of quantization.
+    F16,
+    /// Near-lossless 8-bit KV cache. Default for the 8 GB band.
+    #[default]
+    Q8_0,
+    /// Aggressive 4-bit KV cache — max context headroom, quality risk.
+    Q4_0,
+}
+
+impl KvCacheType {
+    /// ggml type id for `--type_k` / `--type_v`. `None` for `F16`: we leave the
+    /// flag off so the server keeps its own f16 default rather than pinning it
+    /// (keeps the opt-out identical to pre-4.6 behavior).
+    #[must_use]
+    pub fn ggml_type_id(self) -> Option<i32> {
+        match self {
+            Self::F16 => None,
+            Self::Q4_0 => Some(2),
+            Self::Q8_0 => Some(8),
+        }
+    }
+
+    /// llama.cpp requires Flash Attention for a quantized **value** cache, so any
+    /// non-f16 cache implies `--flash_attn true`. (Key-only quant would not, but
+    /// we always quantize K and V together — see [`build_server_args`].)
+    #[must_use]
+    pub fn requires_flash_attn(self) -> bool {
+        self.ggml_type_id().is_some()
+    }
+
+    /// Parse a tool-arg wire string. `None` for unknown input — the caller
+    /// surfaces the accepted set rather than guessing.
+    #[must_use]
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "f16" => Some(Self::F16),
+            "q8_0" | "q8" => Some(Self::Q8_0),
+            "q4_0" | "q4" => Some(Self::Q4_0),
+            _ => None,
+        }
+    }
+
+    /// Canonical wire string (matches the serde representation). For logs / UI.
+    #[must_use]
+    pub fn as_wire(self) -> &'static str {
+        match self {
+            Self::F16 => "f16",
+            Self::Q8_0 => "q8_0",
+            Self::Q4_0 => "q4_0",
+        }
+    }
+}
+
 /// Where to pull the GGUF from. Defaults from Phase 3 decision A (Qwen2.5-7B `Q4_K_M`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelSpec {
@@ -40,6 +109,15 @@ pub struct ModelSpec {
     pub n_ctx: u32,
     /// llama.cpp `-ngl` value. `-1` offloads all layers to GPU; `0` is CPU-only.
     pub n_gpu_layers: i32,
+    /// KV-cache quantization (Phase 4.6). `Q8_0` by default on the reference card.
+    /// Changing it (vs a running server) is a model-identity change → restart.
+    #[serde(default)]
+    pub kv_cache_type: KvCacheType,
+    /// Force Flash Attention even with an f16 cache (a speed/VRAM win on Ampere).
+    /// `false` by default; a quantized `kv_cache_type` turns it on regardless via
+    /// [`KvCacheType::requires_flash_attn`].
+    #[serde(default)]
+    pub flash_attn: bool,
 }
 
 impl ModelSpec {
@@ -264,6 +342,42 @@ async fn download_model(
     Ok(PathBuf::from(path))
 }
 
+/// Build the `llama_cpp.server` argv that follows `-m llama_cpp.server`.
+///
+/// Extracted from [`spawn_server`] so the flag wiring is unit-testable without
+/// spawning a process — in particular the KV-cache-quant + Flash-Attention
+/// coupling (Phase 4.6). Note: `llama_cpp.server`'s pydantic CLI parses bool
+/// fields with a value (`--flash_attn true`), NOT as store-true, and `type_k`/
+/// `type_v` take ggml type ids as integers.
+fn build_server_args(model_path: &std::path::Path, port: u16, model: &ModelSpec) -> Vec<String> {
+    let mut args = vec![
+        "--model".into(),
+        model_path.to_string_lossy().into_owned(),
+        "--port".into(),
+        port.to_string(),
+        "--host".into(),
+        "127.0.0.1".into(),
+        "--n_ctx".into(),
+        model.n_ctx.to_string(),
+        "--n_gpu_layers".into(),
+        model.n_gpu_layers.to_string(),
+    ];
+    // KV-cache quantization: K and V together (a quantized V needs Flash Attn).
+    if let Some(type_id) = model.kv_cache_type.ggml_type_id() {
+        args.push("--type_k".into());
+        args.push(type_id.to_string());
+        args.push("--type_v".into());
+        args.push(type_id.to_string());
+    }
+    // Flash Attention: required by a quantized V cache; also honoured as an
+    // explicit f16 speed opt-in. Only emitted when true (server default is false).
+    if model.flash_attn || model.kv_cache_type.requires_flash_attn() {
+        args.push("--flash_attn".into());
+        args.push("true".into());
+    }
+    args
+}
+
 fn spawn_server(
     runner: &PythonRunner,
     model_path: &std::path::Path,
@@ -276,16 +390,7 @@ fn spawn_server(
     cmd.args(&runner.leading_args)
         .arg("-m")
         .arg("llama_cpp.server")
-        .arg("--model")
-        .arg(model_path)
-        .arg("--port")
-        .arg(port.to_string())
-        .arg("--host")
-        .arg("127.0.0.1")
-        .arg("--n_ctx")
-        .arg(model.n_ctx.to_string())
-        .arg("--n_gpu_layers")
-        .arg(model.n_gpu_layers.to_string())
+        .args(build_server_args(model_path, port, model))
         .current_dir(&runner.cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
@@ -353,4 +458,113 @@ fn instant_to_unix_ms(at: Instant) -> u128 {
     let wall = now_wall - delta;
     wall.duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec(kv: KvCacheType, flash_attn: bool) -> ModelSpec {
+        ModelSpec {
+            repo_id: "r".into(),
+            filename: "m.gguf".into(),
+            n_ctx: 4096,
+            n_gpu_layers: -1,
+            kv_cache_type: kv,
+            flash_attn,
+        }
+    }
+
+    /// Helper: index of `flag` in argv, asserting its value arg follows.
+    fn value_after<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+        args.iter().position(|a| a == flag).map(|i| args[i + 1].as_str())
+    }
+
+    #[test]
+    fn ggml_type_ids_match_abi() {
+        // These are GGML ABI constants the llama.cpp server consumes verbatim.
+        assert_eq!(KvCacheType::F16.ggml_type_id(), None);
+        assert_eq!(KvCacheType::Q8_0.ggml_type_id(), Some(8));
+        assert_eq!(KvCacheType::Q4_0.ggml_type_id(), Some(2));
+    }
+
+    #[test]
+    fn quantized_kv_requires_flash_attn_but_f16_does_not() {
+        assert!(!KvCacheType::F16.requires_flash_attn());
+        assert!(KvCacheType::Q8_0.requires_flash_attn());
+        assert!(KvCacheType::Q4_0.requires_flash_attn());
+    }
+
+    #[test]
+    fn q8_0_emits_type_flags_and_flash_attn() {
+        let args = build_server_args(std::path::Path::new("/tmp/m.gguf"), 8765, &spec(KvCacheType::Q8_0, false));
+        assert_eq!(value_after(&args, "--type_k"), Some("8"));
+        assert_eq!(value_after(&args, "--type_v"), Some("8"));
+        // Bool flags take a value in llama_cpp.server's CLI — never store-true.
+        assert_eq!(value_after(&args, "--flash_attn"), Some("true"));
+    }
+
+    #[test]
+    fn q4_0_emits_type_2() {
+        let args = build_server_args(std::path::Path::new("/tmp/m.gguf"), 8765, &spec(KvCacheType::Q4_0, false));
+        assert_eq!(value_after(&args, "--type_k"), Some("2"));
+        assert_eq!(value_after(&args, "--type_v"), Some("2"));
+        assert_eq!(value_after(&args, "--flash_attn"), Some("true"));
+    }
+
+    #[test]
+    fn f16_default_omits_kv_and_flash_flags() {
+        // The exact-baseline opt-out: no --type_k/--type_v/--flash_attn at all,
+        // so serving is byte-for-byte the pre-4.6 behavior.
+        let args = build_server_args(std::path::Path::new("/tmp/m.gguf"), 8765, &spec(KvCacheType::F16, false));
+        assert!(!args.iter().any(|a| a == "--type_k"));
+        assert!(!args.iter().any(|a| a == "--type_v"));
+        assert!(!args.iter().any(|a| a == "--flash_attn"));
+    }
+
+    #[test]
+    fn f16_with_explicit_flash_attn_emits_only_flash() {
+        // Speed opt-in without KV quant: flash on, no type flags.
+        let args = build_server_args(std::path::Path::new("/tmp/m.gguf"), 8765, &spec(KvCacheType::F16, true));
+        assert!(!args.iter().any(|a| a == "--type_k"));
+        assert_eq!(value_after(&args, "--flash_attn"), Some("true"));
+    }
+
+    #[test]
+    fn base_args_always_present() {
+        let args = build_server_args(std::path::Path::new("/models/x.gguf"), 9001, &spec(KvCacheType::Q8_0, false));
+        assert_eq!(value_after(&args, "--model"), Some("/models/x.gguf"));
+        assert_eq!(value_after(&args, "--port"), Some("9001"));
+        assert_eq!(value_after(&args, "--host"), Some("127.0.0.1"));
+        assert_eq!(value_after(&args, "--n_ctx"), Some("4096"));
+        assert_eq!(value_after(&args, "--n_gpu_layers"), Some("-1"));
+    }
+
+    #[test]
+    fn kv_cache_type_serde_wire_strings() {
+        // Wire strings are the project.toml / JSON contract — pin them.
+        assert_eq!(serde_json::to_string(&KvCacheType::F16).unwrap(), "\"f16\"");
+        assert_eq!(serde_json::to_string(&KvCacheType::Q8_0).unwrap(), "\"q8_0\"");
+        assert_eq!(serde_json::to_string(&KvCacheType::Q4_0).unwrap(), "\"q4_0\"");
+        assert_eq!(KvCacheType::default(), KvCacheType::Q8_0);
+    }
+
+    #[test]
+    fn from_wire_accepts_aliases_and_rejects_unknown() {
+        assert_eq!(KvCacheType::from_wire("Q8_0"), Some(KvCacheType::Q8_0));
+        assert_eq!(KvCacheType::from_wire("q8"), Some(KvCacheType::Q8_0));
+        assert_eq!(KvCacheType::from_wire(" f16 "), Some(KvCacheType::F16));
+        assert_eq!(KvCacheType::from_wire("q4"), Some(KvCacheType::Q4_0));
+        assert_eq!(KvCacheType::from_wire("q2_k"), None);
+        assert_eq!(KvCacheType::from_wire(""), None);
+    }
+
+    #[test]
+    fn modelspec_missing_kv_fields_default_to_q8() {
+        // Back-compat: a serialized spec from before 4.6 has no kv fields.
+        let json = r#"{"repo_id":"r","filename":"m.gguf","n_ctx":4096,"n_gpu_layers":-1}"#;
+        let spec: ModelSpec = serde_json::from_str(json).unwrap();
+        assert_eq!(spec.kv_cache_type, KvCacheType::Q8_0);
+        assert!(!spec.flash_attn);
+    }
 }

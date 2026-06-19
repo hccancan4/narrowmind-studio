@@ -11,7 +11,7 @@ use tracing::info;
 
 use super::context::ToolContext;
 use super::registry::{Tool, ToolDef, ToolError, ToolResult};
-use crate::inference::ModelSpec;
+use crate::inference::{KvCacheType, ModelSpec};
 
 #[derive(Debug, Deserialize)]
 struct StartArgs {
@@ -25,6 +25,13 @@ struct StartArgs {
     /// llama.cpp `-ngl`. `-1` = all layers to GPU. Default `-1` per Phase 3 decision.
     #[serde(default)]
     n_gpu_layers: Option<i32>,
+    /// KV-cache quantization: `f16` | `q8_0` | `q4_0` (Phase 4.6). Default `q8_0`.
+    #[serde(default)]
+    kv_cache_type: Option<String>,
+    /// Force Flash Attention even with an f16 cache. A quantized cache enables it
+    /// regardless.
+    #[serde(default)]
+    flash_attn: Option<bool>,
 }
 
 pub struct StartInferenceServer;
@@ -38,8 +45,10 @@ impl Tool for StartInferenceServer {
                           server at a time). Downloads the GGUF from HuggingFace via hf-hub \
                           if not in cache, spawns the OpenAI-compatible server, waits for \
                           health. Default model: bartowski/Qwen2.5-7B-Instruct-GGUF Q4_K_M. \
-                          Returns the endpoint URL the rag_chat / chat_preview tools will \
-                          point at."
+                          KV cache is quantized to q8_0 by default (frees VRAM for longer \
+                          context on 8 GB; pass kv_cache_type='f16' for the exact-baseline \
+                          opt-out). Returns the endpoint URL the rag_chat / chat_preview \
+                          tools will point at."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -47,7 +56,9 @@ impl Tool for StartInferenceServer {
                     "repo_id":      { "type": "string", "description": "HF repo id, e.g. 'bartowski/Qwen2.5-7B-Instruct-GGUF'." },
                     "filename":     { "type": "string", "description": "GGUF filename inside the repo." },
                     "n_ctx":        { "type": "integer", "minimum": 256, "maximum": 32768, "default": 4096 },
-                    "n_gpu_layers": { "type": "integer", "default": -1, "description": "-1 = all layers on GPU; 0 = CPU-only." }
+                    "n_gpu_layers": { "type": "integer", "default": -1, "description": "-1 = all layers on GPU; 0 = CPU-only." },
+                    "kv_cache_type": { "type": "string", "enum": ["f16", "q8_0", "q4_0"], "default": "q8_0", "description": "KV-cache quantization. q8_0 (default) is near-lossless and frees ~half the KV VRAM; f16 is the full-precision opt-out; q4_0 is aggressive (more context, quality risk). Quantized caches enable Flash Attention automatically." },
+                    "flash_attn":   { "type": "boolean", "description": "Force Flash Attention even with an f16 cache. A quantized kv_cache_type turns it on regardless." }
                 }
             }),
         }
@@ -89,6 +100,15 @@ impl Tool for StartInferenceServer {
         if let Some(g) = args.n_gpu_layers {
             model.n_gpu_layers = g;
         }
+        if let Some(kv) = args.kv_cache_type {
+            model.kv_cache_type = KvCacheType::from_wire(&kv).ok_or_else(|| ToolError::BadInput {
+                tool: "start_inference_server".into(),
+                reason: format!("unknown kv_cache_type `{kv}` (expected f16, q8_0, or q4_0)"),
+            })?;
+        }
+        if let Some(fa) = args.flash_attn {
+            model.flash_attn = fa;
+        }
 
         let endpoint = manager
             .ensure_running(&runner, &model)
@@ -99,10 +119,12 @@ impl Tool for StartInferenceServer {
             })?;
         let status = manager.status().await;
 
-        info!(endpoint = %endpoint, model = %model.repo_id, "start_inference_server");
+        let flash_on = model.flash_attn || model.kv_cache_type.requires_flash_attn();
+        info!(endpoint = %endpoint, model = %model.repo_id, kv = ?model.kv_cache_type, flash_attn = flash_on, "start_inference_server");
         Ok(ToolResult::text(format!(
-            "inference server up at {endpoint} (model `{}/{}`, n_ctx={}, n_gpu_layers={})",
-            model.repo_id, model.filename, model.n_ctx, model.n_gpu_layers
+            "inference server up at {endpoint} (model `{}/{}`, n_ctx={}, n_gpu_layers={}, kv_cache={}, flash_attn={})",
+            model.repo_id, model.filename, model.n_ctx, model.n_gpu_layers,
+            model.kv_cache_type.as_wire(), flash_on
         ))
         .with_structured(serde_json::to_value(&status).unwrap_or(Value::Null)))
     }
