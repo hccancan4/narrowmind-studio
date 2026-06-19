@@ -162,11 +162,13 @@ impl Tool for StartTraining {
         })?;
         // Seed: explicit arg > project [training] seed > derived from the
         // synth split seed (same project trains reproducibly by default).
+        // Masked to u32: HF Trainer / numpy reject anything past 2**32-1.
         let seed = args
             .seed
             .or(tcfg.seed)
             .or_else(|| cfg_proj.synth.as_ref().map(|s| s.split_seed ^ 0x5EED))
-            .unwrap_or(42);
+            .unwrap_or(42)
+            & 0xFFFF_FFFF;
 
         let wcfg = worker_config(&tcfg, preset, base, seed);
         let idle = std::time::Duration::from_secs(tcfg.idle_timeout_secs);
