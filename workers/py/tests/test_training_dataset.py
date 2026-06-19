@@ -73,6 +73,9 @@ def test_from_params_ignores_unknown_keys() -> None:
         {"base_model_hf_repo": "r", "tokenizer_id": "t", "max_seq_length": 16},
         {"base_model_hf_repo": "r", "tokenizer_id": "t", "learning_rate": 2.0},
         {"base_model_hf_repo": "r", "tokenizer_id": "t", "validation_split": 0.0},
+        # u64 seed from a buggy caller: numpy/set_seed only accept u32.
+        {"base_model_hf_repo": "r", "tokenizer_id": "t", "seed": 2**32},
+        {"base_model_hf_repo": "r", "tokenizer_id": "t", "seed": -1},
     ],
 )
 def test_validation_rejects_broken_configs(bad: dict) -> None:

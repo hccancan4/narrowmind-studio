@@ -76,6 +76,9 @@ class TrainingParams:
             raise ValueError("batch size and grad accumulation must be >= 1")
         if not (0.0 < self.validation_split <= 0.5):
             raise ValueError(f"validation_split out of range (0, 0.5]: {self.validation_split}")
+        # numpy / transformers set_seed reject anything outside u32.
+        if not (0 <= self.seed <= 2**32 - 1):
+            raise ValueError(f"seed out of range [0, 2**32-1]: {self.seed}")
 
     def effective_batch_size(self) -> int:
         return self.per_device_train_batch_size * self.gradient_accumulation_steps
