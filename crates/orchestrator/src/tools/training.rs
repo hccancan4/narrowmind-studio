@@ -467,6 +467,227 @@ impl Tool for TestAdapter {
 }
 
 // ---------------------------------------------------------------------------
+// export_domain_gguf (Phase 4.6 slice 3) — merge adapter -> quantized GGUF
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct ExportGgufArgs {
+    /// Run id whose adapter to export. Defaults to project.toml [training] `last_run_id`.
+    #[serde(default)]
+    run_id: Option<String>,
+    /// llama-quantize type (default `Q4_K_M`).
+    #[serde(default)]
+    quant: Option<String>,
+    /// GGUF filename slug; defaults to the project name.
+    #[serde(default)]
+    domain: Option<String>,
+}
+
+pub struct ExportDomainGguf;
+
+#[async_trait]
+impl Tool for ExportDomainGguf {
+    fn def(&self) -> ToolDef {
+        ToolDef {
+            name: "export_domain_gguf".into(),
+            description: "Merge a trained LoRA adapter into its base and produce ONE quantized \
+                          domain GGUF (default Q4_K_M) under the project's models/ dir — the file \
+                          the llama.cpp server loads to serve your fine-tune. Runs the merge in the \
+                          WSL training env, then convert + quantize via the vendored llama.cpp \
+                          build; the ~15 GB 16-bit/f16 intermediates stage on ext4 and are removed. \
+                          VRAM hard mutex applies. Slow (several minutes for a 7B merge + convert)."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "run_id": { "type": "string", "description": "Defaults to [training] last_run_id." },
+                    "quant":  { "type": "string", "default": "Q4_K_M", "description": "llama-quantize type, e.g. Q4_K_M, Q5_K_M, Q8_0." },
+                    "domain": { "type": "string", "description": "GGUF filename slug; defaults to the project name." }
+                }
+            }),
+        }
+    }
+
+    async fn invoke(&self, ctx: &ToolContext, args: Value) -> Result<ToolResult, ToolError> {
+        let args: ExportGgufArgs = serde_json::from_value(args).map_err(|e| ToolError::BadInput {
+            tool: "export_domain_gguf".into(),
+            reason: e.to_string(),
+        })?;
+        let project = ctx.current_project().await.ok_or(ToolError::NoProject)?;
+        let runner = ctx.training_runner.as_ref().ok_or_else(|| ToolError::Exec {
+            tool: "export_domain_gguf".into(),
+            message: "training runner not configured on ToolContext".into(),
+        })?;
+        let manager = ctx.training.as_ref().ok_or_else(|| ToolError::Exec {
+            tool: "export_domain_gguf".into(),
+            message: "TrainingManager not configured on ToolContext".into(),
+        })?;
+        let inference = ctx.inference.as_ref().ok_or_else(|| ToolError::Exec {
+            tool: "export_domain_gguf".into(),
+            message: "InferenceManager not configured on ToolContext".into(),
+        })?;
+        if manager.is_active().await {
+            return Err(ToolError::Exec {
+                tool: "export_domain_gguf".into(),
+                message: "a training run is active; wait for it or stop_training first".into(),
+            });
+        }
+
+        let run_id = match args.run_id {
+            Some(id) => id,
+            None => ctx
+                .project_store
+                .get(&project.name)
+                .map_err(ToolError::Project)?
+                .training
+                .last_run_id
+                .ok_or_else(|| ToolError::BadInput {
+                    tool: "export_domain_gguf".into(),
+                    reason: "no run_id given and project has no [training] last_run_id".into(),
+                })?,
+        };
+        let quant = args.quant.unwrap_or_else(|| "Q4_K_M".into());
+
+        // Fail fast before the WSL spawn if there's no adapter.
+        let adapter_dir = project.root.join("runs").join(&run_id).join("adapter");
+        if !adapter_dir.is_dir() {
+            return Err(ToolError::BadInput {
+                tool: "export_domain_gguf".into(),
+                reason: format!("run `{run_id}` has no adapter dir — train first"),
+            });
+        }
+
+        // VRAM hard mutex (KARAR 1).
+        if inference.status().await.running {
+            inference.stop().await;
+            log_to_agent_log(&project.root, "inference server stopped to free VRAM for GGUF export");
+        }
+
+        emit_progress(
+            &ctx.events,
+            &format!("exporting run {run_id} → {quant} GGUF (merge + convert + quantize)…"),
+        );
+
+        let (_, cancel_rx) = tokio::sync::watch::channel(false);
+        let events = ctx.events.clone();
+        let mut params = json!({
+            "project_root": wsl::to_wsl_path(&project.root),
+            "run_id": run_id,
+            "quant": quant.clone(),
+        });
+        if let Some(domain) = args.domain {
+            params["domain"] = json!(domain);
+        }
+        let cmd = crate::worker::WorkerCommand {
+            module: "narrowmind_workers.training".into(),
+            method: "training.export_gguf".into(),
+            params,
+            timeout: None,
+        };
+        // Stages (merge → convert → quantize) each notify, refreshing the
+        // deadline; within a stage a ~15 GB write can stay silent for minutes,
+        // so the idle window is generous.
+        let value = crate::worker::call_worker_streaming(
+            runner,
+            &cmd,
+            std::time::Duration::from_secs(1800),
+            cancel_rx,
+            move |method, p| {
+                if method == "export.stage" {
+                    if let Some(stage) = p.get("stage").and_then(Value::as_str) {
+                        let _ = events.send(super::context::ToolEvent::Progress {
+                            message: format!("export: {stage}"),
+                        });
+                    }
+                }
+            },
+        )
+        .await
+        .map_err(|e| ToolError::Exec {
+            tool: "export_domain_gguf".into(),
+            message: e.to_string(),
+        })?;
+
+        let gguf_path = value.get("gguf_path").and_then(Value::as_str).unwrap_or("?");
+        let size_mb = value.get("size_mb").and_then(Value::as_u64).unwrap_or(0);
+        info!(gguf = %gguf_path, size_mb, quant = %quant, "export_domain_gguf");
+        Ok(ToolResult::text(format!(
+            "exported domain GGUF: {gguf_path} ({size_mb} MB, {quant}). Load it with \
+             start_inference_server (filename set to this path), or see list_domain_models. \
+             Inference server was stopped for VRAM."
+        ))
+        .with_structured(value))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// list_domain_models (Phase 4.6 slice 3) — the project's exported GGUFs
+// ---------------------------------------------------------------------------
+
+pub struct ListDomainModels;
+
+#[async_trait]
+impl Tool for ListDomainModels {
+    fn def(&self) -> ToolDef {
+        ToolDef {
+            name: "list_domain_models".into(),
+            description: "List the domain GGUF files exported for the current project (its models/ \
+                          dir). These merged + quantized fine-tunes are what the inference server \
+                          loads to serve a domain model."
+                .into(),
+            input_schema: json!({ "type": "object" }),
+        }
+    }
+
+    async fn invoke(&self, ctx: &ToolContext, _args: Value) -> Result<ToolResult, ToolError> {
+        let project = ctx.current_project().await.ok_or(ToolError::NoProject)?;
+        let models = read_domain_models(&project.root.join("models"));
+        let mut text = String::new();
+        if models.is_empty() {
+            text.push_str("no domain GGUFs yet — run export_domain_gguf after training.");
+        } else {
+            let _ = writeln!(text, "domain GGUFs ({}):", models.len());
+            for m in &models {
+                let _ = writeln!(
+                    text,
+                    "  {} ({} MB)",
+                    m.get("filename").and_then(Value::as_str).unwrap_or("?"),
+                    m.get("size_mb").and_then(Value::as_u64).unwrap_or(0),
+                );
+            }
+        }
+        info!(count = models.len(), "list_domain_models");
+        Ok(ToolResult::text(text).with_structured(json!({ "models": models })))
+    }
+}
+
+/// Read `models/*.gguf` as `{filename, path, size_mb}`, sorted by filename.
+fn read_domain_models(models_dir: &std::path::Path) -> Vec<Value> {
+    let mut models = Vec::new();
+    let Ok(entries) = std::fs::read_dir(models_dir) else {
+        return models;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("gguf") {
+            let size_mb = entry.metadata().map_or(0, |m| m.len() / (1024 * 1024));
+            let filename = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("?")
+                .to_string();
+            models.push(json!({
+                "filename": filename,
+                "path": path.to_string_lossy(),
+                "size_mb": size_mb,
+            }));
+        }
+    }
+    models.sort_by(|a, b| a["filename"].as_str().cmp(&b["filename"].as_str()));
+    models
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -577,5 +798,22 @@ mod tests {
         let runs = read_runs(tmp.path());
         assert_eq!(runs.len(), 2);
         assert_eq!(runs[0]["run_id"], "new");
+    }
+
+    #[test]
+    fn read_domain_models_filters_gguf_and_sorts() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let models = tmp.path().join("models");
+        std::fs::create_dir_all(&models).unwrap();
+        std::fs::write(models.join("zeta-q4_k_m.gguf"), b"x").unwrap();
+        std::fs::write(models.join("alpha-q8_0.gguf"), b"xx").unwrap();
+        std::fs::write(models.join("notes.txt"), b"ignore me").unwrap();
+        let out = read_domain_models(&models);
+        assert_eq!(out.len(), 2, "only .gguf files");
+        // sorted by filename
+        assert_eq!(out[0]["filename"], "alpha-q8_0.gguf");
+        assert_eq!(out[1]["filename"], "zeta-q4_k_m.gguf");
+        // missing dir -> empty, no panic
+        assert!(read_domain_models(&tmp.path().join("nope")).is_empty());
     }
 }
