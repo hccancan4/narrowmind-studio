@@ -32,6 +32,9 @@ struct StartArgs {
     /// regardless.
     #[serde(default)]
     flash_attn: Option<bool>,
+    /// Reuse the prompt-prefix KV cache across requests (host RAM). Default on.
+    #[serde(default)]
+    prompt_cache: Option<bool>,
 }
 
 pub struct StartInferenceServer;
@@ -58,7 +61,8 @@ impl Tool for StartInferenceServer {
                     "n_ctx":        { "type": "integer", "minimum": 256, "maximum": 32768, "default": 4096 },
                     "n_gpu_layers": { "type": "integer", "default": -1, "description": "-1 = all layers on GPU; 0 = CPU-only." },
                     "kv_cache_type": { "type": "string", "enum": ["f16", "q8_0", "q4_0"], "default": "q8_0", "description": "KV-cache quantization. q8_0 (default) is near-lossless and frees ~half the KV VRAM; f16 is the full-precision opt-out; q4_0 is aggressive (more context, quality risk). Quantized caches enable Flash Attention automatically." },
-                    "flash_attn":   { "type": "boolean", "description": "Force Flash Attention even with an f16 cache. A quantized kv_cache_type turns it on regardless." }
+                    "flash_attn":   { "type": "boolean", "description": "Force Flash Attention even with an f16 cache. A quantized kv_cache_type turns it on regardless." },
+                    "prompt_cache": { "type": "boolean", "default": true, "description": "Reuse the prompt-prefix KV cache across requests (host RAM, no VRAM cost) so the shared system prompt + repeated RAG context aren't re-evaluated every call." }
                 }
             }),
         }
@@ -109,6 +113,9 @@ impl Tool for StartInferenceServer {
         if let Some(fa) = args.flash_attn {
             model.flash_attn = fa;
         }
+        if let Some(pc) = args.prompt_cache {
+            model.prompt_cache = pc;
+        }
 
         let endpoint = manager
             .ensure_running(&runner, &model)
@@ -120,11 +127,11 @@ impl Tool for StartInferenceServer {
         let status = manager.status().await;
 
         let flash_on = model.flash_attn || model.kv_cache_type.requires_flash_attn();
-        info!(endpoint = %endpoint, model = %model.repo_id, kv = ?model.kv_cache_type, flash_attn = flash_on, "start_inference_server");
+        info!(endpoint = %endpoint, model = %model.repo_id, kv = ?model.kv_cache_type, flash_attn = flash_on, prompt_cache = model.prompt_cache, "start_inference_server");
         Ok(ToolResult::text(format!(
-            "inference server up at {endpoint} (model `{}/{}`, n_ctx={}, n_gpu_layers={}, kv_cache={}, flash_attn={})",
+            "inference server up at {endpoint} (model `{}/{}`, n_ctx={}, n_gpu_layers={}, kv_cache={}, flash_attn={}, prompt_cache={})",
             model.repo_id, model.filename, model.n_ctx, model.n_gpu_layers,
-            model.kv_cache_type.as_wire(), flash_on
+            model.kv_cache_type.as_wire(), flash_on, model.prompt_cache
         ))
         .with_structured(serde_json::to_value(&status).unwrap_or(Value::Null)))
     }

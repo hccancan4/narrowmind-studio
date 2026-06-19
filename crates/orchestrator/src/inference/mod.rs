@@ -118,6 +118,18 @@ pub struct ModelSpec {
     /// [`KvCacheType::requires_flash_attn`].
     #[serde(default)]
     pub flash_attn: bool,
+    /// Reuse the llama.cpp prompt KV cache across requests (Phase 4.6) so the
+    /// shared system prompt + repeated RAG context aren't re-evaluated on every
+    /// call. This is the server's host-RAM cache (`cache_type=ram`) — no VRAM
+    /// cost — and is on by default.
+    #[serde(default = "default_prompt_cache")]
+    pub prompt_cache: bool,
+}
+
+/// serde default for [`ModelSpec::prompt_cache`] — on. A bare `#[serde(default)]`
+/// would give `false`; the 4.6 default is to reuse the prompt cache.
+fn default_prompt_cache() -> bool {
+    true
 }
 
 impl ModelSpec {
@@ -375,6 +387,12 @@ fn build_server_args(model_path: &std::path::Path, port: u16, model: &ModelSpec)
         args.push("--flash_attn".into());
         args.push("true".into());
     }
+    // Prompt-prefix cache reuse (host RAM, not VRAM). Server default is off, so
+    // we emit it explicitly; cache_type defaults to "ram" which is what we want.
+    if model.prompt_cache {
+        args.push("--cache".into());
+        args.push("true".into());
+    }
     args
 }
 
@@ -472,6 +490,7 @@ mod tests {
             n_gpu_layers: -1,
             kv_cache_type: kv,
             flash_attn,
+            prompt_cache: true,
         }
     }
 
@@ -541,6 +560,21 @@ mod tests {
     }
 
     #[test]
+    fn prompt_cache_on_emits_cache_flag() {
+        // Default helper has prompt_cache = true. Bool flag takes a value.
+        let args = build_server_args(std::path::Path::new("/tmp/m.gguf"), 8765, &spec(KvCacheType::Q8_0, false));
+        assert_eq!(value_after(&args, "--cache"), Some("true"));
+    }
+
+    #[test]
+    fn prompt_cache_off_omits_cache_flag() {
+        let mut s = spec(KvCacheType::Q8_0, false);
+        s.prompt_cache = false;
+        let args = build_server_args(std::path::Path::new("/tmp/m.gguf"), 8765, &s);
+        assert!(!args.iter().any(|a| a == "--cache"));
+    }
+
+    #[test]
     fn kv_cache_type_serde_wire_strings() {
         // Wire strings are the project.toml / JSON contract — pin them.
         assert_eq!(serde_json::to_string(&KvCacheType::F16).unwrap(), "\"f16\"");
@@ -560,11 +594,13 @@ mod tests {
     }
 
     #[test]
-    fn modelspec_missing_kv_fields_default_to_q8() {
-        // Back-compat: a serialized spec from before 4.6 has no kv fields.
+    fn modelspec_missing_efficiency_fields_use_46_defaults() {
+        // Back-compat: a serialized spec from before 4.6 has no kv/cache fields.
+        // They must fill in the 4.6 defaults (q8_0 KV, prompt cache on).
         let json = r#"{"repo_id":"r","filename":"m.gguf","n_ctx":4096,"n_gpu_layers":-1}"#;
         let spec: ModelSpec = serde_json::from_str(json).unwrap();
         assert_eq!(spec.kv_cache_type, KvCacheType::Q8_0);
         assert!(!spec.flash_attn);
+        assert!(spec.prompt_cache);
     }
 }

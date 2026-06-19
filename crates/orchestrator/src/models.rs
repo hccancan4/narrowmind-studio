@@ -123,6 +123,8 @@ impl BaseModel {
             kv_cache_type: SERVING_KV_CACHE,
             // Forced on by the quantized cache; not an independent default.
             flash_attn: false,
+            // Phase 4.6: reuse the prompt cache across requests (host RAM).
+            prompt_cache: true,
         }
     }
 }
@@ -239,6 +241,7 @@ mod tests {
         assert_eq!(spec.n_gpu_layers, -1);
         assert_eq!(spec.kv_cache_type, KvCacheType::Q8_0);
         assert!(!spec.flash_attn);
+        assert!(spec.prompt_cache);
     }
 
     /// And the legacy constructor itself must produce the same thing — it now
