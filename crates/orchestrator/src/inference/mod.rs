@@ -162,6 +162,9 @@ pub enum InferenceError {
     #[error("server health check timed out after {0}s")]
     HealthTimeout(u64),
 
+    #[error("invalid model file: {0}")]
+    InvalidModel(String),
+
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -221,24 +224,28 @@ impl InferenceManager {
                 *s.last_used.lock().await = Instant::now();
                 return Ok(format!("http://127.0.0.1:{}", s.port));
             }
-            // Different model — kill + restart.
-            info!(old = %s.model.repo_id, new = %model.repo_id, "model change: stopping previous server");
-            if let Some(old) = guard.take() {
-                stop_state(old).await;
-            }
         }
 
-        // 1. Download via inference worker (idempotent — uses HF cache).
+        // Resolve + validate the NEW model BEFORE tearing down any running
+        // server, so a download error or a partial/invalid GGUF leaves the
+        // user's current model untouched (the Local Chat picker made switching a
+        // routine action). Neither step uses VRAM; only the spawn does, so on an
+        // 8 GB card we still can't keep both loaded — but the common failures
+        // (HF errors, partial/corrupt GGUFs) are caught here while the old server
+        // is still serving, rather than after it's already been killed.
         let model_path = download_model(runner, model).await?;
-
-        // 2. Pick a free port starting at DEFAULT_PORT.
+        validate_gguf(&model_path)?;
         let port = pick_free_port(DEFAULT_PORT).await?;
 
-        // 3. Spawn llama_cpp.server (long-lived; stdout/stderr inherited so logs flow to
-        //    the orchestrator's tracing subscriber).
+        // New model is resolved + valid: free VRAM by stopping the old (if the
+        // model is changing), then spawn. A failure past this point can leave no
+        // server running — unavoidable on a single-VRAM card, but now rare (a
+        // genuine load OOM / health timeout on a valid file, not the cases above).
+        if let Some(old) = guard.take() {
+            info!(old = %old.model.repo_id, new = %model.repo_id, "model change: stopping previous server");
+            stop_state(old).await;
+        }
         let child = spawn_server(runner, &model_path, port, model)?;
-
-        // 4. Wait for /health.
         wait_for_health(port, STARTUP_HEALTH_TIMEOUT).await?;
 
         let last_used = Arc::new(Mutex::new(Instant::now()));
@@ -337,6 +344,36 @@ impl InferenceManager {
 fn local_model_path(filename: &str) -> Option<PathBuf> {
     let p = PathBuf::from(filename);
     (p.is_absolute() && p.is_file()).then_some(p)
+}
+
+/// Sanity-check that a resolved model path is actually a GGUF before handing it
+/// to llama.cpp. A partial / 0-byte / truncated export (e.g. an interrupted
+/// `export_domain_gguf`) otherwise passes the `is_file()` gate, spawns a server
+/// that never loads, and only fails via a 120 s health timeout — after the
+/// previous server was already stopped. Magic + a small size floor turn that
+/// into an immediate, clear error while the old server is still up.
+fn validate_gguf(path: &std::path::Path) -> Result<(), InferenceError> {
+    use std::io::Read as _;
+    let meta = std::fs::metadata(path)
+        .map_err(|e| InferenceError::InvalidModel(format!("{}: {e}", path.display())))?;
+    if meta.len() < 1024 {
+        return Err(InferenceError::InvalidModel(format!(
+            "{} is too small to be a GGUF ({} bytes)",
+            path.display(),
+            meta.len()
+        )));
+    }
+    let mut magic = [0u8; 4];
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut magic))
+        .map_err(|e| InferenceError::InvalidModel(format!("{}: {e}", path.display())))?;
+    if &magic != b"GGUF" {
+        return Err(InferenceError::InvalidModel(format!(
+            "{} is not a GGUF file (bad magic header)",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 async fn download_model(
@@ -630,5 +667,26 @@ mod tests {
         assert_eq!(local_model_path(&missing.to_string_lossy()), None);
         // a plain HF repo filename (relative) -> None
         assert_eq!(local_model_path("Qwen2.5-7B-Instruct-Q4_K_M.gguf"), None);
+    }
+
+    #[test]
+    fn validate_gguf_accepts_magic_rejects_junk() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        // valid: GGUF magic + enough bytes
+        let good = tmp.path().join("good.gguf");
+        let mut buf = b"GGUF".to_vec();
+        buf.resize(2048, 0);
+        std::fs::write(&good, &buf).unwrap();
+        assert!(validate_gguf(&good).is_ok());
+        // partial write — magic but too small
+        let small = tmp.path().join("partial.gguf");
+        std::fs::write(&small, b"GGUF").unwrap();
+        assert!(validate_gguf(&small).is_err());
+        // wrong magic — not a GGUF
+        let wrong = tmp.path().join("notgguf.gguf");
+        std::fs::write(&wrong, vec![0u8; 4096]).unwrap();
+        assert!(validate_gguf(&wrong).is_err());
+        // missing file
+        assert!(validate_gguf(&tmp.path().join("nope.gguf")).is_err());
     }
 }

@@ -515,6 +515,19 @@ fn export_gguf_params(
     params
 }
 
+/// Idle (max-silence) window for the export streaming call. The imatrix stage is
+/// a single silent CPU run whose length scales with `imatrix_chunks`, so the
+/// window scales too — a flat value could kill a legitimately-progressing large
+/// calibration. Non-imatrix exports only need the convert/quantize stages.
+fn export_idle_secs(imatrix: bool, imatrix_chunks: Option<u32>) -> u64 {
+    if !imatrix {
+        return 1800;
+    }
+    // base + a generous per-chunk allowance (a CPU f16 7B forward over a 512-tok
+    // window is slow on the reference box); the default 80 chunks -> ~110 min.
+    1800 + u64::from(imatrix_chunks.unwrap_or(80)) * 60
+}
+
 pub struct ExportDomainGguf;
 
 #[async_trait]
@@ -624,7 +637,7 @@ impl Tool for ExportDomainGguf {
         // Stages each notify, refreshing the deadline; within a stage a ~15 GB
         // write — or, with imatrix, a long silent CPU calibration run — can stay
         // quiet for a while, so the idle window is generous (an hour for imatrix).
-        let idle_secs = if use_imatrix { 3600 } else { 1800 };
+        let idle_secs = export_idle_secs(use_imatrix, args.imatrix_chunks);
         let value = crate::worker::call_worker_streaming(
             runner,
             &cmd,
@@ -646,17 +659,32 @@ impl Tool for ExportDomainGguf {
             message: e.to_string(),
         })?;
 
-        let gguf_path = value.get("gguf_path").and_then(Value::as_str).unwrap_or("?");
-        let size_mb = value.get("size_mb").and_then(Value::as_u64).unwrap_or(0);
-        let imatrix_used = value.get("imatrix").and_then(Value::as_bool).unwrap_or(false);
-        info!(gguf = %gguf_path, size_mb, quant = %quant, imatrix = imatrix_used, "export_domain_gguf");
-        Ok(ToolResult::text(format!(
-            "exported domain GGUF: {gguf_path} ({size_mb} MB, {quant}, imatrix={imatrix_used}). Load \
-             it with start_inference_server (filename set to this path), or see list_domain_models. \
-             Inference server was stopped for VRAM."
-        ))
-        .with_structured(value))
+        Ok(export_result(&project.root, &quant, value))
     }
+}
+
+/// Build the `export_domain_gguf` result. The worker returns a WSL `/mnt/c/...`
+/// `gguf_path`, but serving is Windows-native and `local_model_path` needs an
+/// absolute *Windows* path (a `/mnt` path's `is_absolute()` is false on Windows).
+/// Reconstruct the host path from the project root + the slug/quant the worker
+/// echoes, so the "load it with this path" instruction actually works.
+fn export_result(project_root: &std::path::Path, quant: &str, mut value: Value) -> ToolResult {
+    let slug = value.get("domain").and_then(Value::as_str).unwrap_or("domain");
+    let host_path = project_root
+        .join("models")
+        .join(format!("{slug}-{}.gguf", quant.to_lowercase()))
+        .to_string_lossy()
+        .into_owned();
+    value["gguf_path"] = json!(host_path);
+    let size_mb = value.get("size_mb").and_then(Value::as_u64).unwrap_or(0);
+    let imatrix_used = value.get("imatrix").and_then(Value::as_bool).unwrap_or(false);
+    info!(gguf = %host_path, size_mb, quant = %quant, imatrix = imatrix_used, "export_domain_gguf");
+    ToolResult::text(format!(
+        "exported domain GGUF: {host_path} ({size_mb} MB, {quant}, imatrix={imatrix_used}). Load \
+         it with start_inference_server (filename set to this path), or see list_domain_models. \
+         Inference server was stopped for VRAM."
+    ))
+    .with_structured(value)
 }
 
 // ---------------------------------------------------------------------------
@@ -854,5 +882,14 @@ mod tests {
         assert_eq!(out[1]["filename"], "zeta-q4_k_m.gguf");
         // missing dir -> empty, no panic
         assert!(read_domain_models(&tmp.path().join("nope")).is_empty());
+    }
+
+    #[test]
+    fn export_idle_secs_scales_with_imatrix_chunks() {
+        assert_eq!(export_idle_secs(false, None), 1800);
+        assert_eq!(export_idle_secs(false, Some(500)), 1800, "chunks ignored without imatrix");
+        assert_eq!(export_idle_secs(true, None), 1800 + 80 * 60, "default 80 chunks");
+        assert_eq!(export_idle_secs(true, Some(200)), 1800 + 200 * 60);
+        assert!(export_idle_secs(true, Some(1000)) > export_idle_secs(true, Some(80)));
     }
 }

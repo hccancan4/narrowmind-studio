@@ -558,16 +558,36 @@ def execute_export_gguf(
                     "--chunks", str(imatrix_chunks),
                 ])
             else:
-                append_log(rd, "export: no datasets/rag.jsonl corpus — skipping imatrix")
+                # imatrix explicitly requested but no usable corpus. IQ-type
+                # quants REQUIRE an imatrix, so silently dropping it would make
+                # llama-quantize fail with a cryptic error — fail clearly here.
+                msg = (
+                    "imatrix=true but datasets/rag.jsonl has no usable corpus — "
+                    "ingest sources / build the RAG dataset first, or omit imatrix"
+                )
+                if quant.upper().startswith("IQ"):
+                    raise ValueError(f"{msg} ({quant} cannot be produced without an imatrix)")
+                append_log(rd, f"export: {msg}; continuing without imatrix")
 
-        # 3) quantize -> project models/
+        # 3) quantize -> project models/. Write a temp file IN models/ then
+        #    os.replace() into place, so a killed/failed quantize never leaves a
+        #    partial .gguf that the picker would list and try to serve. (Same dir
+        #    -> atomic rename; the temp uses a .part suffix so it isn't picked up
+        #    as a model even if a crash skips the cleanup. Don't stage on ext4 and
+        #    replace across filesystems — that raises OSError.)
         notify("export.stage", {"stage": "quantizing", "quant": quant})
         append_log(rd, f"export: quantize {quant} -> {out}")
+        tmp_out = out.with_name(out.name + ".part")
+        tmp_out.unlink(missing_ok=True)
         qcmd = [str(quantize_bin)]
         if imatrix_file is not None and imatrix_file.is_file():
             qcmd += ["--imatrix", str(imatrix_file)]
-        qcmd += [str(f16_gguf), str(out), quant]
-        _run_export_cmd(qcmd)
+        qcmd += [str(f16_gguf), str(tmp_out), quant]
+        try:
+            _run_export_cmd(qcmd)
+            os.replace(tmp_out, out)
+        finally:
+            tmp_out.unlink(missing_ok=True)
 
         size_mb = out.stat().st_size // (1024 * 1024)
         used_imatrix = imatrix_file is not None and imatrix_file.is_file()

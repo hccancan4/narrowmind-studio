@@ -54,6 +54,16 @@ export function ChatPreview() {
         setMessages([]);
       } catch (e) {
         setError(`switch model: ${e}`);
+        // Re-sync to whatever is actually serving — the server-side fix keeps
+        // the previous model up on a pre-load failure, so don't leave the header
+        // pointing at a model that never started.
+        chat
+          .context()
+          .then((c) => {
+            setCtx(c);
+            setModelKey(c.model_key ?? null);
+          })
+          .catch(() => {});
       } finally {
         setSwitching(false);
       }
@@ -148,6 +158,14 @@ export function ChatPreview() {
             }}
           >
             {modelKey === null && <option value="">(starting…)</option>}
+            {modelKey !== null && !models.some((m) => m.key === modelKey) && (
+              // The live model isn't in the serveable list (e.g. a domain GGUF
+              // deleted out-of-band while serving). Keep the control reflecting
+              // reality instead of rendering an empty selection.
+              <option value={modelKey} disabled>
+                {`(current: ${modelKey})`}
+              </option>
+            )}
             {models.map((m) => (
               <option key={m.key} value={m.key}>
                 {m.label}
