@@ -128,6 +128,12 @@ pub async fn chat_preview_send(
 fn serveable_models(project_root: &Path) -> Vec<serde_json::Value> {
     let mut out: Vec<serde_json::Value> = models::all()
         .iter()
+        // Only the default base is provisioned out of the box. Non-default
+        // registry models (e.g. Gemma 4) need their GGUF downloaded first
+        // (Phase 4.5); offering them here would trigger a multi-GB fetch on
+        // select that can fail AND tear down the running server. Re-include
+        // once they're actually set up.
+        .filter(|m| m.default)
         .map(|m| {
             json!({
                 "key": format!("base:{}", m.id),
