@@ -285,16 +285,10 @@ impl Tool for GenerateSft {
             }
         }
 
-        // Cap to target, shuffle with seed, split.
+        // Cap to target, then shuffle + carve the held-out eval split (shared helper,
+        // also used by `import_sft_from_hf` so both paths split identically).
         all_pairs.truncate(target_total);
-        let mut rng = ChaCha20Rng::seed_from_u64(seed);
-        all_pairs.shuffle(&mut rng);
-        // clamp + cast: eval_split is in [0, 0.5] and pair count is bounded by target_pairs (≤100k).
-        #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let eval_n_raw = ((all_pairs.len() as f32) * args.eval_split).round() as usize;
-        let eval_n = eval_n_raw.min(all_pairs.len());
-        let eval_pairs: Vec<QaPair> = all_pairs.drain(..eval_n).collect();
-        let train_pairs = all_pairs;
+        let (train_pairs, eval_pairs) = split_pairs(all_pairs, args.eval_split, seed);
 
         let datasets_dir = project.root.join("datasets");
         fs::create_dir_all(&datasets_dir).map_err(ToolError::Io)?;
@@ -486,7 +480,28 @@ fn load_included_chunks(
     Ok(out)
 }
 
-fn resolve_seed(
+/// Shuffle `all_pairs` deterministically by `seed`, then carve off the held-out eval
+/// fraction. Returns `(train, eval)`. Shared by `generate_sft` and `import_sft_from_hf`
+/// so both produce identically-shaped, reproducible splits from the same seed.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "eval_split is clamped to [0, 0.5]; pair counts stay well under f32 precision limits"
+)]
+pub(crate) fn split_pairs(
+    mut all_pairs: Vec<QaPair>,
+    eval_split: f32,
+    seed: u64,
+) -> (Vec<QaPair>, Vec<QaPair>) {
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    all_pairs.shuffle(&mut rng);
+    let eval_n = (((all_pairs.len() as f32) * eval_split).round() as usize).min(all_pairs.len());
+    let eval_pairs: Vec<QaPair> = all_pairs.drain(..eval_n).collect();
+    (all_pairs, eval_pairs)
+}
+
+pub(crate) fn resolve_seed(
     ctx: &ToolContext,
     project_name: &str,
     user_seed: Option<u64>,
@@ -510,13 +525,13 @@ fn resolve_seed(
     Ok(s)
 }
 
-fn write_jsonl(path: &std::path::Path, pairs: &[QaPair]) -> Result<(), ToolError> {
+pub(crate) fn write_jsonl(path: &std::path::Path, pairs: &[QaPair]) -> Result<(), ToolError> {
     let tmp = path.with_extension("jsonl.tmp");
     let f = fs::File::create(&tmp)?;
     let mut w = BufWriter::new(f);
     for p in pairs {
         serde_json::to_writer(&mut w, p).map_err(|e| ToolError::Exec {
-            tool: "generate_sft".into(),
+            tool: "write_jsonl".into(),
             message: format!("jsonl write: {e}"),
         })?;
         w.write_all(b"\n")?;
@@ -663,5 +678,40 @@ mod tests {
     fn prompt_template_has_placeholders() {
         assert!(PROMPT_TEMPLATE.contains("{{N_PAIRS}}"));
         assert!(PROMPT_TEMPLATE.contains("{{CHUNK_TEXT}}"));
+    }
+
+    fn qa(i: usize) -> QaPair {
+        QaPair {
+            question: format!("q{i}"),
+            answer: format!("a{i}"),
+            source_chunk_id: format!("c{i}"),
+        }
+    }
+
+    #[test]
+    fn split_pairs_carves_eval_and_is_reproducible() {
+        let pairs: Vec<QaPair> = (0..10).map(qa).collect();
+        let ids = |v: &[QaPair]| v.iter().map(|p| p.source_chunk_id.clone()).collect::<Vec<_>>();
+
+        let (train, eval) = split_pairs(pairs.clone(), 0.2, 7);
+        assert_eq!(train.len(), 8);
+        assert_eq!(eval.len(), 2);
+
+        // Same seed → identical split (train + eval contents and order).
+        let (train2, eval2) = split_pairs(pairs.clone(), 0.2, 7);
+        assert_eq!(ids(&train), ids(&train2));
+        assert_eq!(ids(&eval), ids(&eval2));
+
+        // Different seed → different shuffle (10! orderings; collision is negligible).
+        let (train3, _) = split_pairs(pairs, 0.2, 8);
+        assert_ne!(ids(&train), ids(&train3));
+    }
+
+    #[test]
+    fn split_pairs_zero_eval_keeps_everything_in_train() {
+        let pairs: Vec<QaPair> = (0..5).map(qa).collect();
+        let (train, eval) = split_pairs(pairs, 0.0, 1);
+        assert_eq!(train.len(), 5);
+        assert!(eval.is_empty());
     }
 }

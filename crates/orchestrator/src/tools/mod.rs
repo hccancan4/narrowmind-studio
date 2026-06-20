@@ -10,6 +10,7 @@ pub mod chunks;
 pub mod context;
 pub mod eval;
 pub mod fs;
+pub mod import_sft_from_hf;
 pub mod inference;
 pub mod ingest;
 pub mod projects;
