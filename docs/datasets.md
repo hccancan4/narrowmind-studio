@@ -114,3 +114,10 @@ terms before any production / public use.
 
 The eval judge score is the acceptance gate — the single number that says whether the
 bigger, more thorough dataset actually improved the model.
+
+> **Recall is N/A for imported SFT.** `recall@k` measures whether retrieval returns the
+> chunk a pair was *generated from* — which only exists for the synthetic pipeline. Imported
+> pairs reference a HF dataset row (`source_chunk_id = "hf:<repo>#<row>"`), not a project
+> chunk, so `run_eval` reports recall as **N/A** (not a misleading `0.00`) and the judge score
+> is the metric. To also gauge retrieval quality, ingest a corpus that covers the eval topics
+> and compare judge scores across `mode=dense|sparse|hybrid`.

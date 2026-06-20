@@ -2,12 +2,16 @@
 //!
 //! Two metrics per Phase 3 acceptance:
 //! - **`retrieval_recall@k`**: for each eval pair (Q, A, `source_chunk_id`), does the rag
-//!   worker's top-k include the `source_chunk_id` the synth-gen pass tagged?
+//!   worker's top-k include the `source_chunk_id` the synth-gen pass tagged? Only computed
+//!   over *chunk-grounded* pairs — those whose `source_chunk_id` actually exists in the RAG
+//!   corpus. SFT imported from a HF QA dataset (`import_sft_from_hf`) references a dataset
+//!   row, not a chunk, so recall is reported as **N/A** there and the judge score stands alone.
 //! - **`answer_relevance`**: the rag-assembled answer is scored 1-5 by the configured
 //!   Anthropic provider against the gold answer.
 //!
 //! Writes a per-run markdown report to `evals/<run_id>.md`.
 
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -269,7 +273,8 @@ impl Tool for RunEval {
         }
         results.sort_by_key(|r| r.index);
 
-        let aggregate = aggregate_metrics(&results);
+        let chunk_ids = load_chunk_ids(&project.root);
+        let aggregate = aggregate_metrics(&results, &chunk_ids);
         let run_id = Uuid::new_v4().simple().to_string();
         // Tag the report filename with the retrieval mode so a sweep of three
         // configs produces three distinct, self-describing files instead of
@@ -288,14 +293,19 @@ impl Tool for RunEval {
             &results,
         );
         fs::write(&report_path, &report)?;
-        info!(run_id, mode = mode_tag, total, recall = aggregate.recall_at_k, judge = aggregate.judge_mean, "run_eval");
+        info!(run_id, mode = mode_tag, total, recall = ?aggregate.recall_at_k, grounded = aggregate.grounded_pairs, judge = aggregate.judge_mean, "run_eval");
 
+        // N/A when no eval pair is chunk-grounded (imported SFT) — distinct from a measured 0.00.
+        let recall_str = aggregate
+            .recall_at_k
+            .map_or_else(|| "N/A".to_string(), |r| format!("{r:.2}"));
         Ok(ToolResult::text(format!(
-            "eval done: {} pairs (mode={}), recall@{}={:.2}, judge_mean={:.2}/5 → {}",
+            "eval done: {} pairs (mode={}), recall@{}={} ({} grounded), judge_mean={:.2}/5 → {}",
             total,
             mode_tag,
             args.top_k,
-            aggregate.recall_at_k,
+            recall_str,
+            aggregate.grounded_pairs,
             aggregate.judge_mean,
             report_path.display()
         ))
@@ -305,6 +315,7 @@ impl Tool for RunEval {
             "pairs": total,
             "top_k": args.top_k,
             "recall_at_k": aggregate.recall_at_k,
+            "grounded_pairs": aggregate.grounded_pairs,
             "judge_mean": aggregate.judge_mean,
             "judge_distribution": aggregate.judge_distribution,
             "report_path": report_path,
@@ -422,7 +433,13 @@ fn parse_judge(text: &str) -> Result<JudgeResult, String> {
 }
 
 struct Aggregate {
-    recall_at_k: f64,
+    /// `None` = N/A: not a single eval pair is chunk-grounded (its `source_chunk_id`
+    /// doesn't exist in the RAG corpus), so recall is unmeasurable. This is the normal
+    /// case for SFT imported from a HF QA dataset — its pairs carry an external
+    /// `hf:<repo>#<row>` reference, not a project chunk id. Judge score is the metric there.
+    recall_at_k: Option<f64>,
+    /// How many eval pairs were chunk-grounded — the denominator recall is computed over.
+    grounded_pairs: usize,
     judge_mean: f64,
     judge_distribution: [usize; 6], // index 1..=5; index 0 unused (none/error)
 }
@@ -431,9 +448,22 @@ struct Aggregate {
     clippy::cast_precision_loss,
     reason = "aggregation only — eval pair counts and scores are small ints, mantissa loss harmless"
 )]
-fn aggregate_metrics(results: &[PerPairResult]) -> Aggregate {
-    let total = results.len() as f64;
-    let recall_hits = results.iter().filter(|r| r.recall_hit).count() as f64;
+fn aggregate_metrics(results: &[PerPairResult], chunk_ids: &HashSet<String>) -> Aggregate {
+    // Recall is only meaningful for pairs whose `source_chunk_id` is an actual chunk in the
+    // RAG corpus (the synth-gen path tags each pair with the chunk it was generated from).
+    // Imported-SFT pairs reference a HF dataset row, not a chunk, so they aren't groundable;
+    // counting them as misses would report a misleading 0.00 instead of an honest N/A.
+    let grounded: Vec<&PerPairResult> = results
+        .iter()
+        .filter(|r| chunk_ids.contains(&r.source_chunk_id))
+        .collect();
+    let recall_at_k = if grounded.is_empty() {
+        None
+    } else {
+        let hits = grounded.iter().filter(|r| r.recall_hit).count() as f64;
+        Some(hits / grounded.len() as f64)
+    };
+
     let mut judge_total: u64 = 0;
     let mut judge_count: u64 = 0;
     let mut dist = [0usize; 6];
@@ -452,10 +482,29 @@ fn aggregate_metrics(results: &[PerPairResult]) -> Aggregate {
         judge_total as f64 / judge_count as f64
     };
     Aggregate {
-        recall_at_k: if total == 0.0 { 0.0 } else { recall_hits / total },
+        recall_at_k,
+        grounded_pairs: grounded.len(),
         judge_mean,
         judge_distribution: dist,
     }
+}
+
+/// Load the chunk ids present in the project's RAG corpus, so [`aggregate_metrics`] can tell
+/// whether each eval pair is chunk-grounded (recall measurable) or imported (recall N/A).
+fn load_chunk_ids(project_root: &std::path::Path) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    let rag = project_root.join("datasets").join("rag.jsonl");
+    let Ok(file) = fs::File::open(&rag) else {
+        return ids;
+    };
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        if let Ok(v) = serde_json::from_str::<Value>(line.trim()) {
+            if let Some(id) = v.get("chunk_id").and_then(Value::as_str) {
+                ids.insert(id.to_string());
+            }
+        }
+    }
+    ids
 }
 
 fn render_report(
@@ -478,7 +527,21 @@ fn render_report(
     let _ = writeln!(s);
     let _ = writeln!(s, "| metric | value |");
     let _ = writeln!(s, "|---|---|");
-    let _ = writeln!(s, "| retrieval recall@k | **{:.2}** |", agg.recall_at_k);
+    match agg.recall_at_k {
+        Some(r) => {
+            let _ = writeln!(
+                s,
+                "| retrieval recall@k | **{r:.2}** (over {} chunk-grounded pairs) |",
+                agg.grounded_pairs
+            );
+        }
+        None => {
+            let _ = writeln!(
+                s,
+                "| retrieval recall@k | **N/A** — no chunk-grounded eval pairs (e.g. imported SFT); judge is the metric |"
+            );
+        }
+    }
     let _ = writeln!(s, "| LLM-judge mean | **{:.2} / 5** |", agg.judge_mean);
     for (i, n) in agg.judge_distribution.iter().enumerate().skip(1) {
         let _ = writeln!(s, "| judge score = {i} | {n} pairs |");
@@ -545,3 +608,63 @@ fn load_pairs(path: &std::path::Path) -> Result<Vec<EvalPair>, ToolError> {
 // Reserved for future tunables. Kept here so dead-code lint stays quiet.
 #[allow(dead_code)]
 const _DUR_MARKER: Duration = Duration::from_secs(0);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pair(source_chunk_id: &str, recall_hit: bool, judge: Option<u8>) -> PerPairResult {
+        PerPairResult {
+            index: 0,
+            question: "q".into(),
+            gold: "g".into(),
+            model_answer: "a".into(),
+            source_chunk_id: source_chunk_id.into(),
+            retrieved_ids: vec![],
+            recall_hit,
+            judge_score: judge,
+            judge_reason: None,
+            error: None,
+        }
+    }
+
+    fn chunk_set(ids: &[&str]) -> HashSet<String> {
+        ids.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn recall_is_na_when_no_pair_is_chunk_grounded() {
+        // Imported-SFT pairs reference HF rows, not chunks → nothing grounds → N/A, not 0.00.
+        let results = vec![
+            pair("hf:repo#1", false, Some(2)),
+            pair("hf:repo#2", false, Some(3)),
+        ];
+        let agg = aggregate_metrics(&results, &chunk_set(&["ck_a", "ck_b"]));
+        assert_eq!(agg.recall_at_k, None);
+        assert_eq!(agg.grounded_pairs, 0);
+        // Judge is unaffected by grounding: (2+3)/2 = 2.5.
+        assert!((agg.judge_mean - 2.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn recall_computed_only_over_grounded_pairs() {
+        let results = vec![
+            pair("ck_a", true, Some(5)),    // grounded + hit
+            pair("ck_b", false, Some(4)),   // grounded + miss
+            pair("hf:x#1", false, Some(1)), // ungrounded — excluded from recall, kept in judge
+        ];
+        let agg = aggregate_metrics(&results, &chunk_set(&["ck_a", "ck_b"]));
+        assert_eq!(agg.grounded_pairs, 2);
+        assert_eq!(agg.recall_at_k, Some(0.5)); // 1 hit / 2 grounded
+        // Judge mean is over ALL pairs: (5+4+1)/3.
+        assert!((agg.judge_mean - (10.0 / 3.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn recall_full_when_all_grounded_hit() {
+        let results = vec![pair("ck_a", true, Some(5)), pair("ck_b", true, Some(5))];
+        let agg = aggregate_metrics(&results, &chunk_set(&["ck_a", "ck_b"]));
+        assert_eq!(agg.recall_at_k, Some(1.0));
+        assert_eq!(agg.grounded_pairs, 2);
+    }
+}
