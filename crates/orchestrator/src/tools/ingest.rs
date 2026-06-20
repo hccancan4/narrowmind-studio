@@ -53,6 +53,26 @@ enum IngestArgs {
         #[serde(default)]
         source_id: Option<String>,
     },
+    /// Pull a text column out of a `HuggingFace` dataset (e.g. an SEP corpus) into RAG chunks.
+    HfDataset {
+        /// HF dataset repo id, e.g. `AiresPucrs/stanford-encyclopedia-philosophy`.
+        repo_id: String,
+        #[serde(default = "default_hf_split")]
+        split: String,
+        /// Column holding the document text to chunk.
+        text_column: String,
+        /// Optional topic column (e.g. `category`). Required for `categories`.
+        #[serde(default)]
+        category_column: Option<String>,
+        /// Keep only rows whose `category_column` value is in this list (case-insensitive).
+        #[serde(default)]
+        categories: Option<Vec<String>>,
+        /// Cap on documents kept (even, order-spanning subsample of the filtered rows).
+        #[serde(default)]
+        max_rows: Option<u32>,
+        #[serde(default)]
+        source_id: Option<String>,
+    },
 }
 
 fn default_language() -> String {
@@ -67,6 +87,9 @@ fn default_wikipedia_max_pages() -> u32 {
 fn default_url_max_pages() -> u32 {
     1
 }
+fn default_hf_split() -> String {
+    "train".into()
+}
 fn default_true() -> bool {
     true
 }
@@ -78,11 +101,12 @@ impl Tool for IngestSource {
     fn def(&self) -> ToolDef {
         ToolDef {
             name: "ingest_source".into(),
-            description: "Pull text into the current project from a source. v0.2 supports \
-                          local files and directories (PDF / TXT / MD / EPUB / DOCX / HTML); \
-                          Wikipedia, URL crawling, and HuggingFace datasets land in the next \
-                          milestone. Writes <project>/sources/<id>/documents.jsonl + source.json. \
-                          Per-file failures are recorded in source.json without aborting."
+            description: "Pull text into the current project from a source: local files and \
+                          directories (PDF / TXT / MD / EPUB / DOCX / HTML), a Wikipedia category, \
+                          a URL (single page or BFS crawl), or a HuggingFace text dataset \
+                          (type=hf_dataset: a chosen text_column, with an optional category filter \
+                          for SEP-style corpora). Writes <project>/sources/<id>/documents.jsonl + \
+                          source.json, then chunks. Per-item failures are recorded without aborting."
                 .into(),
             // Anthropic tool input_schema does not support oneOf/allOf/anyOf at the top
             // level (returns 400 invalid_request_error). Flatten into one object with every
@@ -94,7 +118,7 @@ impl Tool for IngestSource {
                 "properties": {
                     "type": {
                         "type": "string",
-                        "enum": ["local", "wikipedia", "url"],
+                        "enum": ["local", "wikipedia", "url", "hf_dataset"],
                         "description": "Source kind. Required."
                     },
                     "path": {
@@ -130,6 +154,33 @@ impl Tool for IngestSource {
                         "default": true,
                         "description": "type=url only. Restrict crawl to seed URL's domain."
                     },
+                    "repo_id": {
+                        "type": "string",
+                        "description": "type=hf_dataset only. HF dataset id, e.g. 'AiresPucrs/stanford-encyclopedia-philosophy'."
+                    },
+                    "text_column": {
+                        "type": "string",
+                        "description": "type=hf_dataset only. Column holding the document text to chunk."
+                    },
+                    "split": {
+                        "type": "string",
+                        "default": "train",
+                        "description": "type=hf_dataset only. Dataset split."
+                    },
+                    "category_column": {
+                        "type": "string",
+                        "description": "type=hf_dataset only. Topic column (e.g. 'category'). Required for `categories`."
+                    },
+                    "categories": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "type=hf_dataset only. Keep only these categories (case-insensitive)."
+                    },
+                    "max_rows": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "type=hf_dataset only. Cap documents kept (even, order-spanning subsample)."
+                    },
                     "source_id": {
                         "type": "string",
                         "description": "Optional fixed source id. Auto-generated when omitted."
@@ -140,6 +191,10 @@ impl Tool for IngestSource {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one cohesive dispatch: parse args → resolve project + runner → map each source type to its worker RPC → call with retry"
+    )]
     async fn invoke(&self, ctx: &ToolContext, args: Value) -> Result<ToolResult, ToolError> {
         let args: IngestArgs = serde_json::from_value(args).map_err(|e| ToolError::BadInput {
             tool: "ingest_source".into(),
@@ -195,6 +250,27 @@ impl Tool for IngestSource {
                     "max_depth": max_depth,
                     "max_pages": max_pages,
                     "same_domain_only": same_domain_only,
+                    "source_id": source_id,
+                }),
+            ),
+            IngestArgs::HfDataset {
+                repo_id,
+                split,
+                text_column,
+                category_column,
+                categories,
+                max_rows,
+                source_id,
+            } => (
+                "ingestion.hf_dataset",
+                json!({
+                    "project_root": project.root,
+                    "repo_id": repo_id,
+                    "split": split,
+                    "text_column": text_column,
+                    "category_column": category_column,
+                    "categories": categories,
+                    "max_rows": max_rows,
                     "source_id": source_id,
                 }),
             ),

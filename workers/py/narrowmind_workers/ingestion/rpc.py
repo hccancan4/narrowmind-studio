@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from narrowmind_workers.ingestion.hf_dataset import ingest_hf_dataset
 from narrowmind_workers.ingestion.local import ingest_local_path
 from narrowmind_workers.ingestion.url import ingest_url
 from narrowmind_workers.ingestion.wikipedia import ingest_wikipedia_category
@@ -22,6 +23,7 @@ def register_methods(registry: MethodRegistry) -> None:
     registry.register("ingestion.local_path", _ingest_local_path)
     registry.register("ingestion.wikipedia", _ingest_wikipedia)
     registry.register("ingestion.url", _ingest_url)
+    registry.register("ingestion.hf_dataset", _ingest_hf_dataset)
 
 
 def _ingest_local_path(params: dict[str, Any]) -> dict[str, Any]:
@@ -115,6 +117,53 @@ def _ingest_url(params: dict[str, Any]) -> dict[str, Any]:
     )
     log.info(
         "url source %s (%d docs, %d failures)",
+        manifest.source_id,
+        manifest.document_count,
+        manifest.failure_count,
+    )
+    return manifest.to_dict()
+
+
+def _ingest_hf_dataset(params: dict[str, Any]) -> dict[str, Any]:
+    """Args: ``{"project_root", "repo_id", "text_column", "split"?, "category_column"?,
+    "categories"?, "max_rows"?, "source_id"?}``."""
+
+    project_root = _required_dir(params, "project_root")
+    repo_id = _required_str(params, "repo_id")
+    text_column = _required_str(params, "text_column")
+    split = params.get("split", "train")
+    if not isinstance(split, str) or not split:
+        raise JsonRpcError(error_codes.INVALID_PARAMS, "`split` must be a non-empty string")
+
+    category_column = params.get("category_column")
+    if category_column is not None and not isinstance(category_column, str):
+        raise JsonRpcError(error_codes.INVALID_PARAMS, "`category_column` must be a string")
+    categories = params.get("categories")
+    if categories is not None:
+        if not (isinstance(categories, list) and all(isinstance(c, str) for c in categories)):
+            raise JsonRpcError(error_codes.INVALID_PARAMS, "`categories` must be a list of strings")
+        if not category_column:
+            raise JsonRpcError(error_codes.INVALID_PARAMS, "`categories` requires `category_column`")
+
+    max_rows = params.get("max_rows")
+    if max_rows is not None and (
+        not isinstance(max_rows, int) or isinstance(max_rows, bool) or max_rows < 1
+    ):
+        raise JsonRpcError(error_codes.INVALID_PARAMS, "`max_rows` must be a positive integer")
+    source_id = params.get("source_id") if isinstance(params.get("source_id"), str) else None
+
+    manifest = ingest_hf_dataset(
+        project_root=project_root,
+        repo_id=repo_id,
+        text_column=text_column,
+        split=split,
+        category_column=category_column,
+        categories=categories,
+        max_rows=max_rows,
+        source_id=source_id,
+    )
+    log.info(
+        "hf_dataset source %s (%d docs, %d failures)",
         manifest.source_id,
         manifest.document_count,
         manifest.failure_count,
