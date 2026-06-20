@@ -7,6 +7,23 @@ file is current.
 
 ---
 
+## Phase 4.7 dataset expansion — slices A–B COMPLETE (2026-06-20)
+
+HF dataset import paths for a bigger SEP fine-tune. On `phase-5-dataset-expansion`.
+
+| Runtime | Command | Result |
+|---|---|---|
+| **Rust unit (orchestrator)** | `cargo test -p narrowmind-orchestrator --lib` | **99 passed** (+5 vs the post-4.6 94: `split_pairs` ×2, `import_sft_from_hf` args/schema ×3) |
+| **Rust workspace** | `cargo test --workspace` | green (agent 9 + orch 99 lib + 2 hello + 9 pool + 5 streaming + desktop 0) |
+| **Python** | `uv --directory workers/py run pytest` | **118 passed** (+7 vs 111: `test_sft_import` ×3, `test_ingestion_hf` ×4) |
+| **clippy** | `cargo clippy -p narrowmind-orchestrator --lib` | **38 warnings (parity)** — net-zero new |
+
+Slices: A `import_sft_from_hf` `c5b1c88` · B `ingest type=hf_dataset` `f5a15b6`.
+Slice C — the SEP re-fine-tune + the eval-vs-4.46 acceptance gate — runs in-app on
+the RTX 3070 and is not a unit-test target.
+
+---
+
 ## Phase 4.6 efficiency — COMPLETE (2026-06-20)
 
 Tier-1 efficiency: run-side serving levers (slices 1–2) + the produce→GGUF→serve

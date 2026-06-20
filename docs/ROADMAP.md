@@ -210,6 +210,39 @@ Chat.
 
 ---
 
+### Phase 4.7 — Dataset Expansion (HF datasets)
+
+**Goal**: lift fine-tune quality past base+RAG by training on bigger, more
+thorough domain data. The Phase 4.6 eval found the 140-pair *synthetic* fine-tune
+**lost** to base+RAG (judge 4.29 vs 4.46) because its answers were terse — the
+lever is SFT data quality + breadth, not retrieval.
+
+**Approach**: a real Stanford Encyclopedia of Philosophy (SEP) domain built from
+ready-made HuggingFace datasets (all SEP-derived, sharing a `category` key):
+- *SFT* — `ruggsea/...instruct` (long, formal answers) + category-filtered
+  `sayhan/strix-philosophy-qa` for topic breadth.
+- *RAG* — `AiresPucrs/stanford-encyclopedia-philosophy` (the raw SEP passages).
+
+**Deliverables** (incremental, one reviewable slice each):
+- **`import_sft_from_hf`** *(slice A)* — import ready HF QA datasets directly as
+  `sft.jsonl` + `eval.jsonl`, bypassing synthetic generation. Per source: column
+  mapping, category filter, min-answer-length, seeded cap; reuses `generate_sft`'s
+  seeded split.
+- **`ingest_source type=hf_dataset`** *(slice B)* — fills the reserved `HF_DATASET`
+  handler: pull a text column from a HF dataset → the existing chunk/clean/dedup
+  pipeline → RAG corpus. Even, order-spanning subsample under a cap.
+- **SEP re-fine-tune experiment** *(slice C)* — new `felsefe-sep` project, ingest
+  SEP for RAG + import the QA datasets for SFT, train, export GGUF, eval.
+
+Both new paths run in the CPU `py` env and reuse the existing `datasets` dep — zero
+new dependencies, the py / py-training split intact. See `docs/datasets.md`.
+
+**Acceptance**: the SEP fine-tune+RAG judge score **beats base+RAG's 4.46** (no
+score≤2, recall ≥ ~0.95) — the single number proving the thorough-SFT thesis.
+Leaves `deneme1-faz2` intact as the A/B baseline.
+
+---
+
 ## Phase 5 — Hybrid + Eval Console (~1 week)
 
 **Goal**: Tier 2 (LoRA + RAG) usable. Eval Console makes "which technique is best" answerable.
