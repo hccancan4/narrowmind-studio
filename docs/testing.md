@@ -7,6 +7,21 @@ file is current.
 
 ---
 
+## Phase 4.8 small-DSLM ladder — slices 1–2 COMPLETE (2026-06-21)
+
+Qwen2.5 3B/1.5B/0.5B registry ladder + completeness-tuned synth prompt, ahead of the
+in-app shrink-search. On `phase-5-dataset-expansion`.
+
+| Runtime | Command | Result |
+|---|---|---|
+| **Rust unit (orchestrator)** | `cargo test -p narrowmind-orchestrator --lib` | **103 passed** (+4 vs 4.7's 99: 3 eval recall-grounding `9aa6295` + 1 small-ladder registry test) |
+| **clippy** | `cargo clippy -p narrowmind-orchestrator --lib` | **38 (parity)** |
+
+Slices: 1 registry ladder `c987ac0` · 2 synth prompt `556e776`. Slice 3 — the shrink-search
+(train/eval over 3B→1.5B→0.5B on grounded synth data) — runs in-app on the RTX 3070.
+
+---
+
 ## Phase 4.7 dataset expansion — slices A–B COMPLETE (2026-06-20)
 
 HF dataset import paths for a bigger SEP fine-tune. On `phase-5-dataset-expansion`.

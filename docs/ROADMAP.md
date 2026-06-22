@@ -243,6 +243,32 @@ Leaves `deneme1-faz2` intact as the A/B baseline.
 
 ---
 
+### Phase 4.8 — Smallest-Viable DSLM (shrink-search) + grounded synth
+
+**Goal**: find the *smallest* base that still clears the domain quality bar — the DSLM
+thesis at its purest. Prompted by Phase 4.7's `felsefe-sep` failure (judge 2.00, 31%
+fabrication) whose root cause was **bad SFT targets** (imported raw SEP passages), not
+model size.
+
+**Two decoupled levers**:
+- **Grounded synthetic data** — back to `generate_sft` over the RAG chunks with a
+  *completeness-tuned* prompt (complete + accurate + self-contained, synthesized not
+  copied). Restores `recall@k` measurability (chunk-grounded pairs) and closes the
+  coverage gap by construction. Generated once, reused for every size.
+- **Qwen2.5 ladder (3B → 1.5B → 0.5B)** — same `qwen2` arch as the 7B → drop-in
+  (Unsloth bnb-4bit + bartowski GGUF + convert_hf_to_gguf all unchanged). Train each on
+  the same data, eval, and pick the smallest whose fine-tune+RAG beats its base+RAG.
+
+**Not chosen (noted)**: Qwen3.5 0.8/2/4B — new multimodal arch (`qwen3_5`) needing an
+Unsloth + llama-cpp-python + WSL-llama.cpp migration; revisit once the recipe is proven.
+DeepSeek-R1 (reasoning-distill, wrong shape) and Llama-3.2 (different family, muddies the
+size comparison) are fallbacks, not the path.
+
+**Acceptance**: a size-vs-quality table; the smallest rung whose fine-tune+RAG beats base,
+holds the judge bar, keeps fabrication low, and reports recall (not N/A) is the shipped DSLM.
+
+---
+
 ## Phase 5 — Hybrid + Eval Console (~1 week)
 
 **Goal**: Tier 2 (LoRA + RAG) usable. Eval Console makes "which technique is best" answerable.
