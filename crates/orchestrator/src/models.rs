@@ -183,6 +183,69 @@ static REGISTRY: &[BaseModel] = &[
         training_supported: true,
         default: false,
     },
+    // Phase 4.8 DSLM shrink-search ladder. Same `qwen2` arch as the 7B above, so
+    // training (Unsloth bnb-4bit) + serving (bartowski GGUF) + export (convert_hf_to_gguf)
+    // are all drop-in — no toolchain change. The goal is to find the SMALLEST size whose
+    // fine-tune+RAG still clears the domain quality bar (see docs/datasets.md).
+    BaseModel {
+        id: "qwen2.5-3b-instruct",
+        display_name: "Qwen2.5 3B Instruct",
+        hf_repo: "unsloth/Qwen2.5-3B-Instruct-bnb-4bit",
+        gguf_repo: "bartowski/Qwen2.5-3B-Instruct-GGUF",
+        gguf_file: "Qwen2.5-3B-Instruct-Q4_K_M.gguf",
+        tokenizer_id: "Qwen/Qwen2.5-3B-Instruct",
+        vram: VramProfile {
+            min_vram_gb: 3.0,
+            recommended_quant: "Q4_K_M",
+        },
+        context_window: 32_768,
+        chat_template: ChatTemplateFormat::ChatMl,
+        license: "Apache-2.0",
+        quantization_notes: "Shrink-search top rung. Q4_K_M ~2 GB; QLoRA in ~2-2.5 h on \
+            the reference RTX 3070 with headroom to spare. First rung to validate the \
+            grounded-synth recipe before pushing smaller.",
+        training_supported: true,
+        default: false,
+    },
+    BaseModel {
+        id: "qwen2.5-1.5b-instruct",
+        display_name: "Qwen2.5 1.5B Instruct",
+        hf_repo: "unsloth/Qwen2.5-1.5B-Instruct-bnb-4bit",
+        gguf_repo: "bartowski/Qwen2.5-1.5B-Instruct-GGUF",
+        gguf_file: "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+        tokenizer_id: "Qwen/Qwen2.5-1.5B-Instruct",
+        vram: VramProfile {
+            min_vram_gb: 1.6,
+            recommended_quant: "Q4_K_M",
+        },
+        context_window: 32_768,
+        chat_template: ChatTemplateFormat::ChatMl,
+        license: "Apache-2.0",
+        quantization_notes: "Shrink-search mid rung. ~1 GB at Q4_K_M, QLoRA in well under \
+            an hour. Leans on RAG for facts so the parametric shrink can stay safe.",
+        training_supported: true,
+        default: false,
+    },
+    BaseModel {
+        id: "qwen2.5-0.5b-instruct",
+        display_name: "Qwen2.5 0.5B Instruct",
+        hf_repo: "unsloth/Qwen2.5-0.5B-Instruct-bnb-4bit",
+        gguf_repo: "bartowski/Qwen2.5-0.5B-Instruct-GGUF",
+        gguf_file: "Qwen2.5-0.5B-Instruct-Q4_K_M.gguf",
+        tokenizer_id: "Qwen/Qwen2.5-0.5B-Instruct",
+        vram: VramProfile {
+            min_vram_gb: 0.8,
+            recommended_quant: "Q4_K_M",
+        },
+        context_window: 32_768,
+        chat_template: ChatTemplateFormat::ChatMl,
+        license: "Apache-2.0",
+        quantization_notes: "Shrink-search floor. ~0.4 GB at Q4_K_M, QLoRA in minutes. \
+            Smallest rung — expected to lean hardest on RAG; the eval decides whether the \
+            domain quality bar survives this small.",
+        training_supported: true,
+        default: false,
+    },
 ];
 
 /// Every registered model, presentation order.
@@ -223,8 +286,27 @@ mod tests {
     fn lookup_hit_and_miss() {
         assert_eq!(get("qwen2.5-7b-instruct").unwrap().display_name, "Qwen2.5 7B Instruct");
         assert_eq!(get("gemma-4-12b-it").unwrap().display_name, "Gemma 4 12B Instruct");
+        assert_eq!(get("qwen2.5-3b-instruct").unwrap().display_name, "Qwen2.5 3B Instruct");
+        assert_eq!(get("qwen2.5-1.5b-instruct").unwrap().display_name, "Qwen2.5 1.5B Instruct");
+        assert_eq!(get("qwen2.5-0.5b-instruct").unwrap().display_name, "Qwen2.5 0.5B Instruct");
         assert!(get("nonexistent-model").is_none());
         assert!(get("").is_none());
+    }
+
+    #[test]
+    fn qwen_small_ladder_is_registered_trainable_and_non_default() {
+        // The Phase 4.8 shrink-search ladder: every rung trainable, none the default,
+        // and VRAM strictly decreasing as the model shrinks.
+        let ladder = ["qwen2.5-3b-instruct", "qwen2.5-1.5b-instruct", "qwen2.5-0.5b-instruct"];
+        let mut prev_vram = f32::INFINITY;
+        for id in ladder {
+            let m = get(id).unwrap_or_else(|| panic!("{id} missing from registry"));
+            assert!(m.training_supported, "{id}: must be trainable for the shrink-search");
+            assert!(!m.default, "{id}: 7B stays the default");
+            assert_eq!(m.chat_template, ChatTemplateFormat::ChatMl, "{id}: Qwen2.5 is ChatML");
+            assert!(m.vram.min_vram_gb < prev_vram, "{id}: VRAM should drop down the ladder");
+            prev_vram = m.vram.min_vram_gb;
+        }
     }
 
     /// THE pinning test: the registry-backed default must be byte-identical
