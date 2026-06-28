@@ -120,8 +120,9 @@ Two further constraints shaped the layout:
    index (BGE-small needs no GPU). A uv workspace shares one lockfile and one
    `.venv`, so the CUDA build cannot coexist there. `workers/py-training/` is
    a **standalone uv project** (excluded from the workspace in the root
-   pyproject) with its own lock: torch from the `cu124` index + unsloth +
-   bitsandbytes + trl/peft/accelerate.
+   pyproject) with its own lock: torch (>=2.6, from the `cu126` index — unsloth
+   2026.x needs `torch.int1` dtypes that landed in 2.6) + unsloth + bitsandbytes
+   + trl/peft/accelerate.
 2. **No path-dependency on narrowmind-workers**: a path dep would drag the
    CPU-torch source pin into the training resolution and conflict. Instead the
    worker is spawned with `PYTHONPATH=<repo>/workers/py` — sound because the

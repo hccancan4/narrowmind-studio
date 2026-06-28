@@ -87,7 +87,11 @@ merge→GGUF→serve `9d3ad81`/`070a81f`/`e6fbbe3` · picker `a133041`/`e9fb37c`
 
 ---
 
-## Current baseline (2026-06-11 PM, post pre-Phase-4 groundwork)
+## Earlier baseline (2026-06-11 PM, pre-Phase-4 groundwork)
+
+> Historical snapshot — predates Phase 4. The **current** counts are the dated
+> Phase 4.8 / 4.7 / 4.6 sections at the top of this file (orchestrator **103** lib,
+> Python **118**). The per-crate breakdown below is as-of 2026-06-11.
 
 | Runtime | Command | Result |
 |---|---|---|

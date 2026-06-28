@@ -110,9 +110,9 @@ narrowmind-studio/
         training/                # Unsloth wrapper (default), Axolotl (alt)
         inference/               # llama.cpp serving
         rag/                     # LlamaIndex + LanceDB
-        eval/                    # lm-eval-harness + custom domain eval
-        export/                  # GGUF conversion, Ollama Modelfile gen
+        sft_import/              # HF QA dataset → sft.jsonl import
         rpc/                     # JSON-RPC server over stdio
+        #   (eval runs in the Rust orchestrator; GGUF export lives in training/)
   packages/
     sdk-js/                      # @narrowmind/client — npm package
   examples/
@@ -176,13 +176,17 @@ The user picks the provider in Settings and supplies their own API key (stored i
 | Category | Tools |
 |---|---|
 | Files | `read_file`, `write_file`, `list_dir`, `run_command` (see trust model below) |
-| Project | `project_status`, `create_project`, `update_project`, `list_projects` |
-| Data | `ingest_source`, `list_chunks`, `filter_chunks`, `build_dataset`, `generate_sft` |
-| Train | `start_training`, `stop_training`, `list_runs`, `select_checkpoint` |
-| RAG | `build_index`, `query_index` |
-| Inference | `start_inference_server`, `chat`, `rag_chat` |
-| Eval | `run_eval`, `compare_models`, `rate_response`, `export_eval_report` |
-| Export | `export_gguf`, `export_modelfile`, `register_with_ollama` |
+| Project | `project_status`, `create_project`, `list_projects` |
+| Data | `ingest_source`, `list_chunks`, `filter_chunks`, `build_dataset`, `generate_sft`, `import_sft_from_hf` |
+| Train | `start_training`, `stop_training`, `list_runs`, `test_adapter` |
+| RAG / Inference | `start_inference_server`, `stop_inference_server`, `query_index`, `rag_chat`, `open_chat_preview` |
+| Eval | `run_eval` |
+| Export | `export_domain_gguf`, `list_domain_models` |
+
+> Reflects the tools actually registered in `agent_bridge.rs`. **Planned, not yet
+> registered:** `export_modelfile` / `register_with_ollama` (Phase 6 packaging); the
+> A/B comparison, manual rating, and report-export features are UI-side Eval Console
+> work (Phase 5), not agent tools.
 
 **`run_command` trust model.** The file tools (`read_file` / `write_file` /
 `list_dir`) enforce a strict path sandbox (`sandbox::resolve_within` rejects
@@ -210,8 +214,9 @@ Workers:
 - **`training`** — Unsloth as the default backend (4-bit QLoRA, fits 7B on 8 GB VRAM). Axolotl as the "power user" alternative for config-driven runs. Reads SFT JSONL, writes adapter to `runs/<id>/adapter/`. Streams metrics to the orchestrator via RPC notifications.
 - **`inference`** — llama.cpp server (via `llama-cpp-python` or subprocess to `llama-server`). Loads GGUF + optional LoRA. Exposes an OpenAI-compatible local endpoint used by the chat preview and the eval worker. Phase 4.6 adds 8 GB-oriented serving levers: KV-cache quantization (`q8_0` default) and prompt-prefix caching — see `docs/quantization.md → Phase 4.6`.
 - **`rag`** — LlamaIndex + LanceDB (embedded, file-backed, no service). BGE-small as default embedding model. Optional BGE-reranker-base.
-- **`eval`** — auto path: held-out chunks → synthesize Q&A via base model → run candidate models → LLM-judge scoring. Manual path: serves comparison samples to the UI. Standard path: optional `lm-evaluation-harness` integration for benchmarks.
-- **`export`** — GGUF conversion via vendored `convert_hf_to_gguf.py`, quantization (Q4_K_M default, Q5_K_M, Q8_0), Ollama `Modelfile` generation. The merge→convert→quantize (incl. domain imatrix) steps land in **Phase 4.6**, superseding the Phase 4 KARAR 8 "no GGUF" deferral; Phase 6 reuses that GGUF for packaging.
+- **`sft_import`** — pulls a ready HuggingFace QA dataset (`question`/`answer`) straight into `datasets/sft.jsonl` (Phase 4.7), bypassing synthetic generation. (HF *text* corpora for RAG come in via the `ingestion` worker's `hf_dataset` source type.)
+
+> **Eval and GGUF export are not separate Python workers.** `run_eval` runs in the **Rust orchestrator** (`tools/eval.rs`): it queries the `rag` worker for retrieval `recall@k` (reported `N/A` for chunk-ungrounded / imported-SFT eval sets, not a misleading 0.00) and calls the Anthropic provider as the LLM judge. **GGUF export** (merge adapter → vendored `convert_hf_to_gguf.py` → `llama-quantize`, optional domain imatrix) lives in the **`training`** worker, driven by `export_domain_gguf` (Phase 4.6, superseding the Phase 4 KARAR 8 "no GGUF" deferral). Ollama `Modelfile` packaging remains Phase 6. `lm-evaluation-harness` is not integrated.
 
 ### 5. SDK (`packages/sdk-js`)
 

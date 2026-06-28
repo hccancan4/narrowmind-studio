@@ -312,7 +312,9 @@ holds the judge bar, keeps fabrication low, and reports recall (not N/A) is the 
 - Template repos under `examples/`:
   - `examples/nextjs-chat/` — drop-in chatbot (target: Nous site)
   - `examples/express-api/` — server-side endpoint
-- New tools: `export_gguf`, `export_modelfile`, `register_with_ollama`
+- New tools: `export_modelfile`, `register_with_ollama`. (GGUF *production* already
+  shipped in Phase 4.6 as `export_domain_gguf` — merge + convert + quantize + optional
+  domain imatrix; Phase 6 only adds the Modelfile/Ollama **packaging** on top.)
 
 **Acceptance**: User runs *"Export the hybrid philosophy model as Q4_K_M and register it with Ollama as `nous-philosophy:v1`"*. In a fresh terminal, `ollama run nous-philosophy:v1` works. The Next.js template repo connects and chats with it.
 

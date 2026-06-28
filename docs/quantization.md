@@ -3,7 +3,8 @@
 Why this document exists: the model registry (`crates/orchestrator/src/models.rs`)
 carries per-model `quantization_notes` that warn users away from specific
 mistakes. This page is the long-form background those notes compress. It also
-pins down what Phase 6's export pipeline will and will not produce.
+pins down what the GGUF export pipeline (Phase 4.6's `export_domain_gguf`) does
+and does not produce.
 
 ---
 
