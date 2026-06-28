@@ -4,7 +4,7 @@ Open-source desktop IDE for building **Domain-Specific Language Models (DSLMs)**
 
 **Reference hardware:** RTX 3070 (8 GB VRAM) + 32 GB RAM.
 
-> Status: **Phase 0 — Repo Bootstrap.** Not yet usable. See [docs/ROADMAP.md](docs/ROADMAP.md) for the build plan.
+> **Status:** working **produce → run → measure** pipeline through **Phase 4.8**. Ingest (PDF / EPUB / HTML / Wikipedia / URL / HuggingFace datasets) → grounded synthetic SFT → QLoRA fine-tune → merged + imatrix GGUF export → local serve (KV-cache quant + prompt cache) → RAG eval (recall + LLM-judge), all on a single 8 GB GPU. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---
 
@@ -31,7 +31,26 @@ NarrowMind Studio ships three production techniques for shaping a small base mod
 - **Tier 1 — LoRA / QLoRA fine-tune.** Adapter training on a 7B-class base via Unsloth.
 - **Tier 2 — Hybrid.** Fine-tuned base + RAG retrieval. The default production-grade recipe.
 
-The filesystem is the source of truth. Project state lives under `~/narrowmind/projects/<name>/` as TOML + JSONL + markdown; the UI is a view over those files.
+The filesystem is the source of truth. Project state lives under `projects/<name>/` (configurable via `NARROWMIND_PROJECTS_ROOT`) as TOML + JSONL + markdown; the UI is a view over those files.
+
+---
+
+## What works today
+
+The full **produce → run → measure** loop, on a single RTX 3070 (8 GB):
+
+1. **Ingest** — PDFs, EPUBs, HTML, Wikipedia categories, web crawls, and HuggingFace datasets → cleaned, sentence-chunked, MinHash-deduped.
+2. **Dataset** — grounded synthetic SFT (`generate_sft`, completeness-tuned, chunk-grounded so recall stays measurable) *or* direct import of ready HF QA datasets; held-out eval split; embeddings in a local LanceDB store.
+3. **Fine-tune** — QLoRA via Unsloth on a Qwen2.5 base (a 0.5B / 1.5B / 3B / 7B ladder), hard-mutexed against the inference server so the 8 GB card never double-loads.
+4. **Export** — merge adapter → one GGUF per domain, with optional domain-calibrated imatrix quantization (IQ3 / IQ4 / Q4_K). No PyTorch at run time.
+5. **Serve** — llama.cpp with KV-cache quantization (Q8_0) + a prompt-prefix cache, so a 7B fits the 8 GB band with room for longer RAG context.
+6. **Measure** — RAG eval with retrieval recall@k + an LLM-judge, sweepable across dense / sparse / hybrid retrieval.
+
+### Recent result — *the smallest viable DSLM*
+
+A philosophy DSLM built from the Stanford Encyclopedia of Philosophy taught the lesson that now shapes the pipeline: **data quality beats model size.** Raw encyclopedia passages as SFT targets gave a **7B** model a **2.00 / 5** judge score with 31 % fabrication. Switching to *grounded, completeness-tuned synthetic* answers took a **3B** model to **3.80 / 5** with retrieval recall back to **0.98** — while training in **46 min** (vs 6 h) and serving in **2.2 GB** (vs 5.7 GB). The current work shrinks the base as far as quality survives (3B → 1.5B → 0.5B), since with good RAG the model carries less of the load.
+
+> The product stays **100 % local**: Local Chat and the exported GGUF never call a cloud API. The Anthropic API is used only in the offline build steps (synthetic-data generation and the eval judge) — like a compiler, not a runtime dependency.
 
 ---
 
