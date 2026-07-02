@@ -99,7 +99,7 @@ winget install Microsoft.VisualStudio.2022.BuildTools  # if not already present
 corepack enable  # provides the pinned pnpm from package.json
 ```
 
-Create a local `.nm-env.ps1` helper (gitignored; template in [docs/dev-setup.md](docs/dev-setup.md)) that sets up the MSVC build env, then dot-source it before running `cargo` or `pnpm tauri dev`:
+Create a local `.nm-env.ps1` helper (gitignored; what it must do — PATH prepends, `vswhere` MSVC lookup, `vcvars` import — is documented step-by-step in [docs/dev-setup.md](docs/dev-setup.md)) and dot-source it before running `cargo` or `pnpm tauri dev`:
 
 ```powershell
 . .\.nm-env.ps1
