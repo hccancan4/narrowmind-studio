@@ -29,7 +29,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/icon.ico"],
+    "icon": ["icons/icon.ico", "icons/icon.png"],
     "category": "DeveloperTool",
     "shortDescription": "Build domain-specific language models without the boilerplate.",
     "longDescription": "Open-source desktop IDE for building Domain-Specific Language Models (DSLMs)."
