@@ -247,12 +247,15 @@ static REGISTRY: &[BaseModel] = &[
         default: false,
     },
     // Qwen3 ladder — the generation-newer counterpart to the Qwen2.5 shrink-search
-    // rungs (scouted 2026-07-01; all repos verified on HF). arch=`qwen3`, NOT `qwen2`:
-    // llama.cpp added qwen3 in Apr-May 2025, ahead of the pinned llama-cpp-python
-    // 0.3.23 wheel, so this is a minor bump — but do a ONE-TIME smoke load of any
-    // Qwen3 GGUF on the pinned runtime before first production use. 0.6B/1.7B are
-    // hybrid thinking models (the 4B-2507 refresh is pure instruct); the GGUF's
-    // embedded template governs — verify no stray <think> blocks in the smoke test.
+    // rungs (scouted 2026-07-01; all repos verified on HF). arch=`qwen3`, NOT `qwen2`.
+    // Smoke load VERIFIED 2026-07-02 on the pinned llama-cpp-python 0.3.23/cu125:
+    // Qwen3-0.6B Q4_K_M loads (`arch = qwen3`), full GPU offload + q8_0 KV + flash-attn
+    // all work — a minor bump, no migration. Template finding from the same smoke:
+    // the hybrid rungs (0.6B/1.7B) emit <think> reasoning by DEFAULT; appending
+    // `/no_think` to the system prompt suppresses it, leaving only an empty
+    // `<think></think>` stub before the answer. RAG/eval prompts against these rungs
+    // must carry that switch (or strip the stub). The 4B-2507 refresh is pure
+    // instruct — no thinking, no switch needed.
     BaseModel {
         id: "qwen3-4b-instruct-2507",
         display_name: "Qwen3 4B Instruct 2507",
@@ -267,9 +270,10 @@ static REGISTRY: &[BaseModel] = &[
         context_window: 262_144,
         chat_template: ChatTemplateFormat::ChatMl,
         license: "Apache-2.0",
-        quantization_notes: "Qwen3 quality rung (July-2025 instruct refresh, non-thinking). \
-            ~2.5 GB at Q4_K_M. Candidate to beat qwen2.5-3b-instruct's judge 3.80 at similar \
-            footprint. Requires the one-time qwen3-arch smoke load (see ladder comment).",
+        quantization_notes: "Qwen3 quality rung (July-2025 instruct refresh, non-thinking — \
+            no /no_think switch needed). ~2.5 GB at Q4_K_M. Candidate to beat \
+            qwen2.5-3b-instruct's judge 3.80 at similar footprint. qwen3-arch smoke load \
+            verified 2026-07-02 on the pinned runtime (see ladder comment).",
         training_supported: true,
         default: false,
     },
@@ -287,10 +291,11 @@ static REGISTRY: &[BaseModel] = &[
         context_window: 40_960,
         chat_template: ChatTemplateFormat::ChatMl,
         license: "Apache-2.0",
-        quantization_notes: "Qwen3 small rung, hybrid thinking model — serve non-thinking \
-            for RAG QA. ~1.3 GB at Q4_K_M. Directly retests the Qwen2.5 finding that \
-            fine-tuning hurts below 3B: a newer generation may move that boundary. \
-            Requires the one-time qwen3-arch smoke load (see ladder comment).",
+        quantization_notes: "Qwen3 small rung, hybrid thinking model — RAG/eval prompts \
+            MUST carry /no_think in the system prompt (verified: suppresses reasoning, \
+            leaves an empty think stub). ~1.3 GB at Q4_K_M. Directly retests the Qwen2.5 \
+            finding that fine-tuning hurts below 3B: a newer generation may move that \
+            boundary. qwen3-arch smoke load verified 2026-07-02 (see ladder comment).",
         training_supported: true,
         default: false,
     },
@@ -308,10 +313,11 @@ static REGISTRY: &[BaseModel] = &[
         context_window: 40_960,
         chat_template: ChatTemplateFormat::ChatMl,
         license: "Apache-2.0",
-        quantization_notes: "Qwen3 floor anchor, hybrid thinking model — serve non-thinking \
-            for RAG QA. ~0.5 GB at Q4_K_M. The Qwen2.5-0.5B rung collapsed (judge 2.18 FT / \
-            2.72 base); this is the check on whether a newer generation changes that. \
-            Requires the one-time qwen3-arch smoke load (see ladder comment).",
+        quantization_notes: "Qwen3 floor anchor, hybrid thinking model — RAG/eval prompts \
+            MUST carry /no_think in the system prompt (verified: suppresses reasoning, \
+            leaves an empty think stub). ~0.5 GB at Q4_K_M. The Qwen2.5-0.5B rung collapsed \
+            (judge 2.18 FT / 2.72 base); this is the check on whether a newer generation \
+            changes that. qwen3-arch smoke load verified 2026-07-02 (see ladder comment).",
         training_supported: true,
         default: false,
     },
