@@ -52,6 +52,7 @@ impl ToolDispatcher for OrchestratorDispatcher {
 pub fn default_registry() -> ToolRegistry {
     use crate::tools::build_dataset::BuildDataset;
     use crate::tools::chunks::{FilterChunks, ListChunks};
+    use crate::tools::corpora::{ExportCorpus, ImportCorpus};
     use crate::tools::eval::RunEval;
     use crate::tools::fs::{ListDir, ReadFile, WriteFile};
     use crate::tools::import_sft_from_hf::ImportSftFromHf;
@@ -79,6 +80,8 @@ pub fn default_registry() -> ToolRegistry {
     r.register(Arc::new(GenerateSft));
     r.register(Arc::new(ImportSftFromHf));
     r.register(Arc::new(BuildDataset));
+    r.register(Arc::new(ExportCorpus));
+    r.register(Arc::new(ImportCorpus));
     r.register(Arc::new(StartInferenceServer));
     r.register(Arc::new(StopInferenceServer));
     r.register(Arc::new(QueryIndex));
