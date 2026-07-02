@@ -86,7 +86,7 @@ docs/                ARCHITECTURE, ROADMAP, dev-setup, testing, datasets,
 
 ## Development setup
 
-Prerequisites: **Rust 1.80+**, **Node 20+**, **pnpm 11+**, **Python 3.11+**, **uv 0.4+**. On Windows, fine-tuning additionally needs **WSL2** (Ubuntu) with the NVIDIA driver's CUDA passthrough — serving/RAG/eval run natively. Full walkthrough: [docs/dev-setup.md](docs/dev-setup.md).
+Prerequisites: **Rust 1.80+**, **Node 22.13+** (pnpm 11 requires it), **pnpm 11+**, **Python 3.11+**, **uv 0.4+**. On Windows, fine-tuning additionally needs **WSL2** (Ubuntu) with the NVIDIA driver's CUDA passthrough — serving/RAG/eval run natively. Full walkthrough: [docs/dev-setup.md](docs/dev-setup.md).
 
 ### Windows
 

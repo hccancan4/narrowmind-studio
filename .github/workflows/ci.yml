@@ -94,10 +94,12 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
 
+      # Node 22.13+ is a hard floor: pnpm 11 uses node:sqlite (Node 22.5+),
+      # so `cache: pnpm` under Node 20 dies with ERR_UNKNOWN_BUILTIN_MODULE.
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
 
       - name: pnpm install
