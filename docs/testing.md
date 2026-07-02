@@ -17,8 +17,8 @@ dedup, unused tokenizers dep, stale scripts). On `phase-5-dataset-expansion`.
 
 | Runtime | Command | Result |
 |---|---|---|
-| **Rust unit (orchestrator)** | `cargo test -p narrowmind-orchestrator --lib` | **104 passed** (+5 vs 4.7's 99: 3 eval recall-grounding `9aa6295` + 1 small-ladder test + 1 Qwen3-ladder test) |
-| **Rust workspace** | `cargo test --workspace` | green (agent 9 + orch 104 lib + 2 hello + 9 pool + 5 streaming + desktop 0) |
+| **Rust unit (orchestrator)** | `cargo test -p narrowmind-orchestrator --lib` | **110 passed** (+5 vs 4.7's 99: 3 eval recall-grounding `9aa6295` + 1 small-ladder test + 1 Qwen3-ladder test; +6 corpora export/import tests, Phase 4.9 slice 1) |
+| **Rust workspace** | `cargo test --workspace` | green (agent 9 + orch 110 lib + 2 hello + 9 pool + 5 streaming + desktop 0) |
 | **Python** | `uv --directory workers/py run pytest` | **118 passed** |
 | **TypeScript** | `pnpm -r typecheck` | **2 workspaces clean** |
 | **clippy** | `cargo clippy -p narrowmind-orchestrator --lib` | **35 (parity)** — was 38; 3 `doc_lazy_continuation` fixed 2026-07-03 so CI's `-D warnings -A clippy::pedantic` passes (pedantic stays advisory / local-parity) |
