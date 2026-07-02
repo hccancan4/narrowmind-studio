@@ -246,6 +246,75 @@ static REGISTRY: &[BaseModel] = &[
         training_supported: true,
         default: false,
     },
+    // Qwen3 ladder — the generation-newer counterpart to the Qwen2.5 shrink-search
+    // rungs (scouted 2026-07-01; all repos verified on HF). arch=`qwen3`, NOT `qwen2`:
+    // llama.cpp added qwen3 in Apr-May 2025, ahead of the pinned llama-cpp-python
+    // 0.3.23 wheel, so this is a minor bump — but do a ONE-TIME smoke load of any
+    // Qwen3 GGUF on the pinned runtime before first production use. 0.6B/1.7B are
+    // hybrid thinking models (the 4B-2507 refresh is pure instruct); the GGUF's
+    // embedded template governs — verify no stray <think> blocks in the smoke test.
+    BaseModel {
+        id: "qwen3-4b-instruct-2507",
+        display_name: "Qwen3 4B Instruct 2507",
+        hf_repo: "unsloth/Qwen3-4B-Instruct-2507-unsloth-bnb-4bit",
+        gguf_repo: "bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF",
+        gguf_file: "Qwen_Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+        tokenizer_id: "Qwen/Qwen3-4B-Instruct-2507",
+        vram: VramProfile {
+            min_vram_gb: 3.2,
+            recommended_quant: "Q4_K_M",
+        },
+        context_window: 262_144,
+        chat_template: ChatTemplateFormat::ChatMl,
+        license: "Apache-2.0",
+        quantization_notes: "Qwen3 quality rung (July-2025 instruct refresh, non-thinking). \
+            ~2.5 GB at Q4_K_M. Candidate to beat qwen2.5-3b-instruct's judge 3.80 at similar \
+            footprint. Requires the one-time qwen3-arch smoke load (see ladder comment).",
+        training_supported: true,
+        default: false,
+    },
+    BaseModel {
+        id: "qwen3-1.7b",
+        display_name: "Qwen3 1.7B",
+        hf_repo: "unsloth/Qwen3-1.7B-unsloth-bnb-4bit",
+        gguf_repo: "unsloth/Qwen3-1.7B-GGUF",
+        gguf_file: "Qwen3-1.7B-Q4_K_M.gguf",
+        tokenizer_id: "Qwen/Qwen3-1.7B",
+        vram: VramProfile {
+            min_vram_gb: 1.8,
+            recommended_quant: "Q4_K_M",
+        },
+        context_window: 40_960,
+        chat_template: ChatTemplateFormat::ChatMl,
+        license: "Apache-2.0",
+        quantization_notes: "Qwen3 small rung, hybrid thinking model — serve non-thinking \
+            for RAG QA. ~1.3 GB at Q4_K_M. Directly retests the Qwen2.5 finding that \
+            fine-tuning hurts below 3B: a newer generation may move that boundary. \
+            Requires the one-time qwen3-arch smoke load (see ladder comment).",
+        training_supported: true,
+        default: false,
+    },
+    BaseModel {
+        id: "qwen3-0.6b",
+        display_name: "Qwen3 0.6B",
+        hf_repo: "unsloth/Qwen3-0.6B-unsloth-bnb-4bit",
+        gguf_repo: "unsloth/Qwen3-0.6B-GGUF",
+        gguf_file: "Qwen3-0.6B-Q4_K_M.gguf",
+        tokenizer_id: "Qwen/Qwen3-0.6B",
+        vram: VramProfile {
+            min_vram_gb: 0.9,
+            recommended_quant: "Q4_K_M",
+        },
+        context_window: 40_960,
+        chat_template: ChatTemplateFormat::ChatMl,
+        license: "Apache-2.0",
+        quantization_notes: "Qwen3 floor anchor, hybrid thinking model — serve non-thinking \
+            for RAG QA. ~0.5 GB at Q4_K_M. The Qwen2.5-0.5B rung collapsed (judge 2.18 FT / \
+            2.72 base); this is the check on whether a newer generation changes that. \
+            Requires the one-time qwen3-arch smoke load (see ladder comment).",
+        training_supported: true,
+        default: false,
+    },
 ];
 
 /// Every registered model, presentation order.
@@ -289,6 +358,9 @@ mod tests {
         assert_eq!(get("qwen2.5-3b-instruct").unwrap().display_name, "Qwen2.5 3B Instruct");
         assert_eq!(get("qwen2.5-1.5b-instruct").unwrap().display_name, "Qwen2.5 1.5B Instruct");
         assert_eq!(get("qwen2.5-0.5b-instruct").unwrap().display_name, "Qwen2.5 0.5B Instruct");
+        assert_eq!(get("qwen3-4b-instruct-2507").unwrap().display_name, "Qwen3 4B Instruct 2507");
+        assert_eq!(get("qwen3-1.7b").unwrap().display_name, "Qwen3 1.7B");
+        assert_eq!(get("qwen3-0.6b").unwrap().display_name, "Qwen3 0.6B");
         assert!(get("nonexistent-model").is_none());
         assert!(get("").is_none());
     }
@@ -304,6 +376,28 @@ mod tests {
             assert!(m.training_supported, "{id}: must be trainable for the shrink-search");
             assert!(!m.default, "{id}: 7B stays the default");
             assert_eq!(m.chat_template, ChatTemplateFormat::ChatMl, "{id}: Qwen2.5 is ChatML");
+            assert!(m.vram.min_vram_gb < prev_vram, "{id}: VRAM should drop down the ladder");
+            prev_vram = m.vram.min_vram_gb;
+        }
+    }
+
+    #[test]
+    fn qwen3_ladder_is_registered_trainable_and_non_default() {
+        // The generation-newer ladder (scouted 2026-07-01): every rung trainable,
+        // none the default, VRAM strictly decreasing, and every note carries the
+        // one-time qwen3-arch smoke-load gate so nobody serves it unverified.
+        let ladder = ["qwen3-4b-instruct-2507", "qwen3-1.7b", "qwen3-0.6b"];
+        let mut prev_vram = f32::INFINITY;
+        for id in ladder {
+            let m = get(id).unwrap_or_else(|| panic!("{id} missing from registry"));
+            assert!(m.training_supported, "{id}: must be trainable for the Qwen3 trial");
+            assert!(!m.default, "{id}: 7B stays the default");
+            assert_eq!(m.chat_template, ChatTemplateFormat::ChatMl, "{id}: Qwen3 is ChatML");
+            assert_eq!(m.license, "Apache-2.0", "{id}: ladder is Apache-only by policy");
+            assert!(
+                m.quantization_notes.contains("smoke load"),
+                "{id}: notes must carry the qwen3-arch smoke-load gate"
+            );
             assert!(m.vram.min_vram_gb < prev_vram, "{id}: VRAM should drop down the ladder");
             prev_vram = m.vram.min_vram_gb;
         }

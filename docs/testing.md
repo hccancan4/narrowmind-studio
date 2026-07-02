@@ -7,14 +7,20 @@ file is current.
 
 ---
 
-## Phase 4.8 small-DSLM ladder — slices 1–2 COMPLETE (2026-06-21)
+## Phase 4.8 small-DSLM ladder — COMPLETE (2026-07-02) + Qwen3 ladder registered
 
-Qwen2.5 3B/1.5B/0.5B registry ladder + completeness-tuned synth prompt, ahead of the
-in-app shrink-search. On `phase-5-dataset-expansion`.
+Qwen2.5 3B/1.5B/0.5B registry ladder + completeness-tuned synth prompt + the in-app
+shrink-search (result above in the slice-3 note) + the Qwen3 0.6B/1.7B/4B-2507 ladder
+registered for the next round (repos HF-verified; one-time qwen3-arch smoke load gates
+first use). Post-shrink-search cleanup also landed (dead debug commands, ChunkRecord
+dedup, unused tokenizers dep, stale scripts). On `phase-5-dataset-expansion`.
 
 | Runtime | Command | Result |
 |---|---|---|
-| **Rust unit (orchestrator)** | `cargo test -p narrowmind-orchestrator --lib` | **103 passed** (+4 vs 4.7's 99: 3 eval recall-grounding `9aa6295` + 1 small-ladder registry test) |
+| **Rust unit (orchestrator)** | `cargo test -p narrowmind-orchestrator --lib` | **104 passed** (+4 vs 4.7's 99: 3 eval recall-grounding `9aa6295` + 1 small-ladder test; +1 Qwen3-ladder test) |
+| **Rust workspace** | `cargo test --workspace` | green (agent 9 + orch 104 lib + 2 hello + 9 pool + 5 streaming + desktop 0) |
+| **Python** | `uv --directory workers/py run pytest` | **118 passed** |
+| **TypeScript** | `pnpm -r typecheck` | **2 workspaces clean** |
 | **clippy** | `cargo clippy -p narrowmind-orchestrator --lib` | **38 (parity)** |
 
 Slices: 1 registry ladder `c987ac0` · 2 synth prompt `556e776`. Slice 3 — the shrink-search
