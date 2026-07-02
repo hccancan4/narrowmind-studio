@@ -267,6 +267,14 @@ size comparison) are fallbacks, not the path.
 **Acceptance**: a size-vs-quality table; the smallest rung whose fine-tune+RAG beats base,
 holds the judge bar, keeps fabrication low, and reports recall (not N/A) is the shipped DSLM.
 
+**RESULT (2026-07-02, complete — full record in `docs/shrink-search-report.md`)**:
+**3B is the smallest viable DSLM.** Frontier over 270 grounded pairs (recall@5 = 0.98
+everywhere): 3B fine-tune 3.80 vs base 3.65 (**+0.15**, only size where fine-tuning pays);
+1.5B 3.29 vs 3.64 (−0.35); 0.5B 2.18 vs 2.72 (−0.54, both arms collapse). The fine-tune
+penalty grows monotonically as size shrinks, and the base+RAG floor itself gives out below
+1.5B. The grounded completeness-tuned synth data was the dominant lever (+1.80 over the
+imported raw-passage targets at 3B).
+
 ---
 
 ## Phase 5 — Hybrid + Eval Console (~1 week)

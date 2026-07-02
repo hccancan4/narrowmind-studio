@@ -18,7 +18,11 @@ in-app shrink-search. On `phase-5-dataset-expansion`.
 | **clippy** | `cargo clippy -p narrowmind-orchestrator --lib` | **38 (parity)** |
 
 Slices: 1 registry ladder `c987ac0` · 2 synth prompt `556e776`. Slice 3 — the shrink-search
-(train/eval over 3B→1.5B→0.5B on grounded synth data) — runs in-app on the RTX 3070.
+(train/eval over 3B→1.5B→0.5B on grounded synth data) — **COMPLETE 2026-07-02** on the
+RTX 3070. Machine-side result (270 grounded pairs, hybrid, recall@5 0.98 everywhere):
+3B FT **3.80** vs base 3.65 · 1.5B FT 3.29 vs base 3.64 · 0.5B FT 2.18 vs base 2.72 →
+**3B = smallest viable DSLM**. Full record: `docs/shrink-search-report.md`; eval reports
+in `projects/felsefe-sep/evals/`.
 
 ---
 
