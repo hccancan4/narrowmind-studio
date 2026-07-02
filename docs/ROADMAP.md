@@ -59,6 +59,7 @@ The Nous Philosophy DSLM must be reachable via the Local Chat button — no agen
   - URL ingest: trafilatura (single page + bounded crawl)
   - Wikipedia: category-based scrape (specify category, max depth, max pages)
   - HuggingFace datasets: search and import with split selection
+    *(handler reserved here; implemented in Phase 4.7 slice B)*
 - Cleaning pipeline:
   - Boilerplate removal
   - Near-duplicate filtering (MinHash)
@@ -114,7 +115,9 @@ Phase 3's vector store and Phase 3's tooling shape.
 mean ≥ 3.8 on the expanded eval set. On the dogfood project
 (2026-05-18): recall **0.98** / judge **4.55**, zero catastrophic
 (score≤2) failures. Multi-config comparison archived at
-`evals/2026-05-18-multiconfig.md`.
+`projects/deneme1-faz2/evals/2026-05-18-multiconfig.md` (`evals/` is a
+per-project directory; `projects/` is not tracked — headline eval reports
+are mirrored under `docs/evals/`).
 
 ---
 
@@ -160,6 +163,13 @@ filename re-verified against HF.
 Console comparison report ranks them on the shared eval set, and the registry
 entry's `quantization_notes` (QAT trap, Turkish-eval caveat) are surfaced in
 the run report.
+
+**STATUS: partially shipped, comparison deferred.** The registry entry
+(`gemma-4-12b-it`), the QAT-repo guard test, and `docs/quantization.md`
+landed; the 12B comparison fine-tune itself never ran — 4.6–4.8
+(efficiency + data quality + shrink-search) took priority once the 8 GB
+VRAM floor and the SFT-data lever proved more decisive than a bigger base.
+Revisit after the Qwen3 round, if at all.
 
 ### Phase 4.6 — Efficiency (Tier 1)
 
@@ -208,6 +218,13 @@ holds the 56-pair eval (recall ≈ 0.98 / judge ≈ 4.55, no score≤2); a domai
 fine-tune merges to a single imatrix-quantized GGUF and serves through Local
 Chat.
 
+**RESULT (2026-06-20): accepted** — q8_0 KV + prompt cache held the 56-pair
+eval (recall@5 0.98 unchanged, judge 4.46 vs the 4.55 f16 baseline — within
+judge run-variance, no score≤2); `export_domain_gguf` shipped end-to-end
+(merge + convert + imatrix quantize, two domain GGUFs A/B-able in the picker).
+Side finding: the 140-pair synthetic fine-tune **lost** to base+RAG
+(4.29 vs 4.46) → spawned Phase 4.7.
+
 ---
 
 ### Phase 4.7 — Dataset Expansion (HF datasets)
@@ -219,8 +236,8 @@ lever is SFT data quality + breadth, not retrieval.
 
 **Approach**: a real Stanford Encyclopedia of Philosophy (SEP) domain built from
 ready-made HuggingFace datasets (all SEP-derived, sharing a `category` key):
-- *SFT* — `ruggsea/...instruct` (long, formal answers) + category-filtered
-  `sayhan/strix-philosophy-qa` for topic breadth.
+- *SFT* — `ruggsea/stanford-encyclopedia-of-philosophy_instruct` (long, formal
+  answers) + category-filtered `sayhan/strix-philosophy-qa` for topic breadth.
 - *RAG* — `AiresPucrs/stanford-encyclopedia-philosophy` (the raw SEP passages).
 
 **Deliverables** (incremental, one reviewable slice each):
@@ -237,9 +254,22 @@ ready-made HuggingFace datasets (all SEP-derived, sharing a `category` key):
 Both new paths run in the CPU `py` env and reuse the existing `datasets` dep — zero
 new dependencies, the py / py-training split intact. See `docs/datasets.md`.
 
-**Acceptance**: the SEP fine-tune+RAG judge score **beats base+RAG's 4.46** (no
-score≤2, recall ≥ ~0.95) — the single number proving the thorough-SFT thesis.
-Leaves `deneme1-faz2` intact as the A/B baseline.
+**Acceptance**: the SEP fine-tune+RAG judge score **beats base+RAG's 4.46**
+(a cross-corpus, ceiling-style reference from deneme1-faz2's 56-pair eval —
+not a same-data bar; Phase 4.8 later measured properly against same-corpus
+base+RAG arms) with no score≤2 and recall ≥ ~0.95. Leaves `deneme1-faz2`
+intact as the A/B baseline.
+
+**RESULT (2026-06-20, complete — acceptance NOT met):** the felsefe-sep
+import experiment scored **judge 2.00/5 with 31 % fabrication** and
+unmeasurable recall (imported pairs referenced dataset rows, not chunks —
+fixed by `9aa6295`, which reports recall N/A for non-grounded pairs). Root
+cause was the *data*, not the thesis: the imported "answers" were raw SEP
+passages loosely aligned to auto-generated questions, so the model learned
+encyclopedia style instead of knowledge. Slices A/B (`import_sft_from_hf`,
+`hf_dataset` ingest) shipped and remain the right tool for genuinely
+pre-cleaned QA datasets; the failure spawned Phase 4.8's grounded-synth
+recipe. Full post-mortem: `docs/shrink-search-report.md`.
 
 ---
 
@@ -269,20 +299,61 @@ holds the judge bar, keeps fabrication low, and reports recall (not N/A) is the 
 
 **RESULT (2026-07-02, complete — full record in `docs/shrink-search-report.md`)**:
 **3B is the smallest viable DSLM.** Frontier over 270 grounded pairs (recall@5 = 0.98
-everywhere): 3B fine-tune 3.80 vs base 3.65 (**+0.15**, only size where fine-tuning pays);
-1.5B 3.29 vs 3.64 (−0.35); 0.5B 2.18 vs 2.72 (−0.54, both arms collapse). The fine-tune
-penalty grows monotonically as size shrinks, and the base+RAG floor itself gives out below
-1.5B. The grounded completeness-tuned synth data was the dominant lever (+1.80 over the
-imported raw-passage targets at 3B).
+everywhere): 3B fine-tune 3.80 vs base 3.65 (**+0.15**, only size where fine-tuning pays;
+the base arm's judge covered 40/270 pairs — full re-run queued); 1.5B 3.29 vs 3.64 (−0.35);
+0.5B 2.18 vs 2.72 (−0.54, both arms collapse). The fine-tune penalty grows monotonically as
+size shrinks, and the base+RAG floor itself gives out below 1.5B. The dominant lever was
+data quality: the Phase 4.7 raw-passage import scored 2.00 on a **7B**; the grounded
+completeness-tuned regeneration scored 3.80 on a **3B** — a smaller model beating a bigger
+one on data alone. Next-round candidates: the **Qwen3 ladder**
+(`qwen3-4b-instruct-2507` / `qwen3-1.7b` / `qwen3-0.6b`) is registered in `models.rs`
+(non-default; qwen3-arch smoke load verified 2026-07-02 on the pinned runtime; hybrid rungs
+carry a `/no_think` eval contract). Qwen3.5 stays skipped (multimodal `qwen3_5` arch, no
+official 4-bit training checkpoints).
+
+---
+
+### Phase 4.9 — Unified Corpus + Corpus Reuse (in flight)
+
+**Goal**: retrain the smallest-viable size (3B) on a **much richer philosophy
+corpus** — the shrink-search proved data quality is the dominant lever, so the
+next quality jump comes from data breadth, not model changes.
+
+**Scope** (the branch of record is `phase-5-dataset-expansion`):
+- **Unified corpus**: merge HF philosophy sets (`mstyslavity/philosophy_undergrad`
+  189K Apache-2.0 with val/test splits, `ruggsea/...SEP-instruct`), public-domain
+  books (Project Gutenberg / Standard Ebooks / Wikisource — pre-1929 = PD), and
+  encyclopedic web (SEP, IEP) into one project via the existing
+  `ingest_source type=hf_dataset | local | url` handlers. **License rule: the
+  product is Apache-2.0 — PD/openly-licensed sources only, license noted per source.**
+- **`corpora/` reuse library** + an `import_dataset` tool: a prepared corpus
+  (chunks + vector store + sft/eval) is expensive (embedding hours + synth $) —
+  build once under a shared `corpora/<name>/`, import into N projects.
+- **Grounded synth** over the unified corpus (completeness-tuned prompt, Haiku
+  synth_model) → retrain 3B → eval. Also re-run the 3B base+RAG 270-pair
+  reference to fix its 40-pair judge coverage.
+
+**Acceptance**: the 3B fine-tune on the unified corpus beats the current 3.80
+on a same-corpus eval; a second project imports the prepared corpus without
+re-ingesting or re-embedding.
 
 ---
 
 ## Phase 5 — Hybrid + Eval Console (~1 week)
 
-**Goal**: Tier 2 (LoRA + RAG) usable. Eval Console makes "which technique is best" answerable.
+**Goal**: Tier 2 (fine-tune + RAG) usable end-to-end in the UI. Eval Console makes "which technique is best" answerable.
+
+> **Re-scope note (2026-07-03)**: much of the original CLI-side value already
+> shipped — `run_eval` produces judge + recall comparison reports, its `mode`
+> arg does one-prompt dense/sparse/hybrid A/Bs (Phase 3.5), and the 4.8
+> frontier table is exactly a multi-config comparison. What remains here is
+> the **UI**: the side-by-side panel, manual ratings, and fan-out. "Hybrid
+> inference" below predates Phase 4.6 — the shipped design serves the merged
+> domain GGUF (`export_domain_gguf`) behind RAG; there is no runtime LoRA
+> loading (see the 4.6 supersession note).
 
 **Deliverables**:
-- Hybrid inference: load base + LoRA + RAG pipeline together in `inference` worker
+- Hybrid inference: serve the merged domain GGUF behind the RAG pipeline (shipped in 4.6-4.8; UI wiring remains)
 - Eval Console panel:
   - A/B/C/D side-by-side: base / RAG / LoRA / hybrid
   - Same prompt fans out to all four, responses tile
@@ -362,4 +433,7 @@ Tracked in a future `FUTURE.md`:
 
 ## Effort Estimate
 
-~6–8 weeks for v1 with Claude Code as the implementer and Hasancan as architect/reviewer.
+~6–8 weeks for v1 with Claude Code as the implementer and Hasancan as
+architect/reviewer *(original pre-4.5–4.8 estimate — the Phase 4 experimental
+sub-phases added ~6 weeks of measurement-driven detours that de-risked
+Phases 5–7; kept for the record, not as a live forecast)*.

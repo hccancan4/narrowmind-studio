@@ -1,4 +1,4 @@
-"""HuggingFace text-dataset ingestion (Phase 5).
+"""HuggingFace text-dataset ingestion (Phase 4.7).
 
 Pull a column of text out of a HF dataset into the project as documents → chunks, so a
 ready-made corpus (e.g. the Stanford Encyclopedia of Philosophy) can back RAG retrieval.

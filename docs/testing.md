@@ -10,23 +10,24 @@ file is current.
 ## Phase 4.8 small-DSLM ladder — COMPLETE (2026-07-02) + Qwen3 ladder registered
 
 Qwen2.5 3B/1.5B/0.5B registry ladder + completeness-tuned synth prompt + the in-app
-shrink-search (result above in the slice-3 note) + the Qwen3 0.6B/1.7B/4B-2507 ladder
+shrink-search (result below in the slice-3 note) + the Qwen3 0.6B/1.7B/4B-2507 ladder
 registered for the next round (repos HF-verified; one-time qwen3-arch smoke load gates
 first use). Post-shrink-search cleanup also landed (dead debug commands, ChunkRecord
 dedup, unused tokenizers dep, stale scripts). On `phase-5-dataset-expansion`.
 
 | Runtime | Command | Result |
 |---|---|---|
-| **Rust unit (orchestrator)** | `cargo test -p narrowmind-orchestrator --lib` | **104 passed** (+4 vs 4.7's 99: 3 eval recall-grounding `9aa6295` + 1 small-ladder test; +1 Qwen3-ladder test) |
+| **Rust unit (orchestrator)** | `cargo test -p narrowmind-orchestrator --lib` | **104 passed** (+5 vs 4.7's 99: 3 eval recall-grounding `9aa6295` + 1 small-ladder test + 1 Qwen3-ladder test) |
 | **Rust workspace** | `cargo test --workspace` | green (agent 9 + orch 104 lib + 2 hello + 9 pool + 5 streaming + desktop 0) |
 | **Python** | `uv --directory workers/py run pytest` | **118 passed** |
 | **TypeScript** | `pnpm -r typecheck` | **2 workspaces clean** |
-| **clippy** | `cargo clippy -p narrowmind-orchestrator --lib` | **38 (parity)** |
+| **clippy** | `cargo clippy -p narrowmind-orchestrator --lib` | **35 (parity)** — was 38; 3 `doc_lazy_continuation` fixed 2026-07-03 so CI's `-D warnings -A clippy::pedantic` passes (pedantic stays advisory / local-parity) |
 
 Slices: 1 registry ladder `c987ac0` · 2 synth prompt `556e776`. Slice 3 — the shrink-search
 (train/eval over 3B→1.5B→0.5B on grounded synth data) — **COMPLETE 2026-07-02** on the
 RTX 3070. Machine-side result (270 grounded pairs, hybrid, recall@5 0.98 everywhere):
-3B FT **3.80** vs base 3.65 · 1.5B FT 3.29 vs base 3.64 · 0.5B FT 2.18 vs base 2.72 →
+3B FT **3.80** vs base 3.65 (40 judged pairs; full re-run queued) · 1.5B FT 3.29 vs
+base 3.64 · 0.5B FT 2.18 vs base 2.72 →
 **3B = smallest viable DSLM**. Full record: `docs/shrink-search-report.md`; eval reports
 in `projects/felsefe-sep/evals/`.
 
@@ -38,7 +39,7 @@ HF dataset import paths for a bigger SEP fine-tune. On `phase-5-dataset-expansio
 
 | Runtime | Command | Result |
 |---|---|---|
-| **Rust unit (orchestrator)** | `cargo test -p narrowmind-orchestrator --lib` | **99 passed** (+5 vs the post-4.6 94: `split_pairs` ×2, `import_sft_from_hf` args/schema ×3) |
+| **Rust unit (orchestrator)** | `cargo test -p narrowmind-orchestrator --lib` | **99 passed** (+5 vs the post-4.6 94: `split_pairs` ×2, `import_sft_from_hf` args/schema ×3; 94 = 4.6's 92 + 2 tests landed with the code-review fix `5fa623d`) |
 | **Rust workspace** | `cargo test --workspace` | green (agent 9 + orch 99 lib + 2 hello + 9 pool + 5 streaming + desktop 0) |
 | **Python** | `uv --directory workers/py run pytest` | **118 passed** (+7 vs 111: `test_sft_import` ×3, `test_ingestion_hf` ×4) |
 | **clippy** | `cargo clippy -p narrowmind-orchestrator --lib` | **38 warnings (parity)** — net-zero new |
@@ -100,7 +101,7 @@ merge→GGUF→serve `9d3ad81`/`070a81f`/`e6fbbe3` · picker `a133041`/`e9fb37c`
 ## Earlier baseline (2026-06-11 PM, pre-Phase-4 groundwork)
 
 > Historical snapshot — predates Phase 4. The **current** counts are the dated
-> Phase 4.8 / 4.7 / 4.6 sections at the top of this file (orchestrator **103** lib,
+> Phase 4.8 / 4.7 / 4.6 sections at the top of this file (orchestrator **104** lib,
 > Python **118**). The per-crate breakdown below is as-of 2026-06-11.
 
 | Runtime | Command | Result |
@@ -145,7 +146,15 @@ no flakes.
 
 ---
 
-## Per-crate / per-package breakdown
+## Per-crate / per-package breakdown (as of 2026-05-17 — historical)
+
+> Historical snapshot frozen at the 2026-05-17 baseline. Current totals live in
+> the dated Phase 4.8 / 4.7 / 4.6 sections at the top: orchestrator **104** lib +
+> **16** integration (2 hello + 9 pool + 5 streaming), agent **9**, pytest **118**,
+> 2 TS workspaces typecheck-clean. Modules added since Phase 4 (worker pool,
+> training/TrainingManager, models registry, KV-quant/prompt-cache, GGUF
+> export/imatrix, `import_sft_from_hf`, `hf_dataset` ingest) are tested but not
+> listed in the module tables below.
 
 ### crates/orchestrator (50 unit + 2 integration)
 
@@ -247,14 +256,14 @@ inline below.
 |---|---|---|---|
 | a | `pnpm tauri dev` | NarrowMind window opens, banner shows "phase 1" | 30 s |
 | b | Open Settings, paste Anthropic key, Save | `hasKey == true` tag flips to "stored" | 5 s |
-| c | Select `test-philosophy` in left rail | Banner shows `project test-philosophy` | <1 s |
-| d | Dataset Browser tab | 376 chunks listed, search box filters live | <1 s |
+| c | Select the dogfood project (e.g. `deneme1-faz2`) in left rail | Banner shows the project name | <1 s |
+| d | Dataset Browser tab | all chunks listed (376 for `deneme1-faz2`), search box filters live | <1 s |
 | e | Agent prompt: *"list chunks tagged with 'consciousness'"* | tool call → result table in terminal | 10 s |
 | f | Agent prompt: *"start the inference server"* | log shows `assigned to device CUDA0` for every layer, port up | 60 s (first run downloads GGUF) |
 | g | Click 💬 Local chat → ask "What is qualia?" | window opens, first token streams, citations appear | 5 s |
 | h | Click a citation in the bubble | retrieved chunk text visible | <1 s |
 | i | Agent prompt: *"stop the inference server"* | server exits cleanly, VRAM drops in nvidia-smi | 5 s |
-| j | Agent prompt: *"run_eval"* (or run the eval script) | `evals/<run_id>.md` written, recall@5 + judge score logged | 5 min |
+| j | Agent prompt: *"run_eval"* | `evals/<run_id>.md` written, recall@5 + judge score logged | 5 min |
 
 ---
 
@@ -307,7 +316,7 @@ Build target: Tauri dev / debug profile, Windows 11, RTX 3070 + 32 GB RAM.
 | g | 💬 Local chat (validated independently on commit `fee2ed6`) | ✓ previously validated |
 | h | Citations expand-on-click (validated on `fee2ed6`) | ✓ previously validated |
 | i | stop_inference_server (idle TTL watchdog covers this; explicit stop validated on prior sessions) | ✓ previously validated |
-| j | run_eval — see report below | ✓ wrote `evals/1bab695ad8a646c29fa7e72196a65c52.md` |
+| j | run_eval — see report below | ✓ wrote `evals/1bab695ad8a646c29fa7e72196a65c52.md` (pre-dates eval-report versioning; not preserved in the repo — the aggregate table below is the record) |
 
 run_eval aggregate on the Phase 3 dogfood dataset (19 hand-curated
 philosophy-of-mind Q&A pairs, Qwen2.5-7B-Instruct Q4_K_M + BGE-small +
@@ -345,8 +354,8 @@ invalid — but it should follow, not precede, the retrieval fixes.
 
 ## How to refresh this file
 
-When you add or remove tests, re-run the four baseline commands above and
-update the table at the top. **Date the row** so future readers can
+When you add or remove tests, re-run the baseline commands in the top table and
+update it. **Date the row** so future readers can
 calibrate whether the numbers are still trustworthy. If a test starts
 flaking, mark it explicitly here rather than silently `#[ignore]`ing it —
 silent skipping is how regressions get back into shipped code.

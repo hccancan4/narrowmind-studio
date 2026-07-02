@@ -1,6 +1,6 @@
 //! `import_sft_from_hf` — import ready-made `HuggingFace` QA datasets directly as SFT data.
 //!
-//! Phase 5: the Phase 4.6 eval showed a small synthetic fine-tune doesn't beat base+RAG when
+//! Phase 4.7: the Phase 4.6 eval showed a small synthetic fine-tune doesn't beat base+RAG when
 //! its answers are terse. This tool bypasses synthetic Q&A generation entirely and pulls
 //! curated `question` / `answer` pairs straight from HF datasets (e.g. the SEP-derived
 //! `ruggsea/...instruct` + category-filtered `sayhan/strix-philosophy-qa`), writing the same

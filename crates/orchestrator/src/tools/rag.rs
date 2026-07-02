@@ -26,6 +26,7 @@ use crate::worker::{call_worker, WorkerCommand};
 ///   - dense → `distance` (lower = closer)
 ///   - sparse → `score` (BM25, higher = better)
 ///   - hybrid → `rrf_score` + `rrf_sources` (which retrievers contributed)
+///
 /// Only one is filled for any given hit; the others stay at their default.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetrievedChunk {

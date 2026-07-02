@@ -40,28 +40,28 @@ The filesystem is the source of truth. The orchestrator reads/writes files; the 
 
 ### Local Chat (Zero-API)
 
-NarrowMind Studio'nun temel UX taahhüdü: kendi DSLM'inle konuşmak için
-asla bir API çağrısına ihtiyaç duyulmaz. Ana ekrandaki "💬 Local chat"
-butonu, hiçbir orkestrasyon, hiçbir agent loop, hiçbir LLM provider
-olmadan bir chat penceresi açar:
+NarrowMind Studio's core UX commitment: talking to your own DSLM never
+requires an API call. The "💬 Local chat" button on the main screen opens
+a chat window with no orchestration, no agent loop, no LLM provider:
 
-- Local inference server (llama.cpp + GGUF base + opsiyonel LoRA adapter)
+- Local inference server (llama.cpp + GGUF base + optional LoRA adapter)
 - Local embedding model (BGE-small, CPU)
 - Local vector store (LanceDB, embedded)
 
-Bootstrap path'i agent loop'unu tamamen bypass eden dedicated bir Tauri
-command'tır (`chat_preview_bootstrap`). Bu mimari taahhüt katıdır: kullanıcı
-Local Chat'i sıfır outbound API trafiğiyle açabilmelidir. Bu codebase'in
-bir özelliği olarak korunur, pazarlama iddiası değildir.
+The bootstrap path is a dedicated Tauri command (`chat_preview_bootstrap`)
+that bypasses the agent loop entirely. This architectural commitment is
+strict: the user must be able to open Local Chat with zero outbound API
+traffic. It is maintained as a property of the codebase, not a marketing
+claim.
 
-Local Chat, NarrowMind Studio'yu komşu araçlardan ayırır:
+Local Chat is what separates NarrowMind Studio from neighboring tools:
 
 | Tool | Local inference | Native RAG | One-click chat |
 |---|---|---|---|
 | Ollama | ✓ | ✗ | ✓ (no RAG) |
 | LM Studio | ✓ | ✗ | ✓ (no RAG) |
-| LangChain | ✓ | ✓ | ✗ (kod gerekir) |
-| llama.cpp + custom RAG | ✓ | ✓ | ✗ (setup gerekir) |
+| LangChain | ✓ | ✓ | ✗ (requires code) |
+| llama.cpp + custom RAG | ✓ | ✓ | ✗ (requires setup) |
 | **NarrowMind Studio** | ✓ | ✓ | ✓ |
 
 ### Base Model Registry

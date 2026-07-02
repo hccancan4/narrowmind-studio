@@ -7,14 +7,25 @@ NarrowMind builds a domain from two kinds of data:
 - **RAG corpus** — text chunked + embedded into the vector store for retrieval
   (`sources/<id>/chunks.jsonl` → `datasets/rag.jsonl` + `vector_store/`).
 
-Historically both came from **synthetic generation** (`generate_sft` prompts the
-provider; `ingest_source` scrapes local files / Wikipedia / URLs). Phase 4.7 adds two
-paths to consume **ready-made HuggingFace datasets** directly — useful when a curated,
-high-quality corpus already exists (e.g. the Stanford Encyclopedia of Philosophy).
+Historically SFT came from **synthetic generation** (`generate_sft` prompts the
+provider over ingested chunks) and the RAG corpus from `ingest_source` (local files /
+Wikipedia / URLs). Phase 4.7 adds two paths to consume **ready-made HuggingFace
+datasets** directly — useful when a curated, high-quality corpus already exists
+(e.g. the Stanford Encyclopedia of Philosophy).
 
 > **Why this exists.** The Phase 4.6 eval showed a small *synthetic* fine-tune lost to
-> base+RAG (judge 4.29 vs 4.46) because its answers were terse. Curated datasets with
-> long, formal answers are the fix. See `docs/ROADMAP.md → Phase 4.7`.
+> base+RAG (judge 4.29 vs 4.46) because its answers were terse. At the time, curated
+> datasets with long, formal answers looked like the fix. See `docs/ROADMAP.md → Phase 4.7`.
+>
+> **Outcome (Phase 4.8).** The SEP import experiment **failed the gate** — the 7B
+> fine-tune on imported data scored judge **2.00/5** with 31 % fabrication, because
+> the imported "answers" were raw SEP passages loosely aligned to auto-generated
+> questions, not real answers. Grounded, completeness-tuned `generate_sft` over the
+> project's own RAG chunks then took a **3B** fine-tune to **3.80** — the recommended
+> SFT path for encyclopedic corpora.
+> `import_sft_from_hf` remains the right tool for genuinely pre-cleaned QA datasets —
+> verify the answer column holds complete, self-contained answers before importing.
+> Full record: `docs/shrink-search-report.md`.
 
 Both paths run in the **CPU `py` worker env** and reuse the existing `datasets`
 dependency — no new packages, and the `py` (Windows/CPU) vs `py-training` (WSL/CUDA)
@@ -80,8 +91,9 @@ Example:
   "categories": ["abduction", "ethics", "logic"], "max_rows": 18000 }
 ```
 
-After ingesting, run `build_dataset` + `rag.embed_chunks` as usual to populate the
-vector store.
+After ingesting, run `build_dataset` as usual — it embeds the chunks into the vector
+store (and builds the BM25 sidecar) via the rag worker's `rag.embed_chunks` RPC; no
+second tool call is needed.
 
 ---
 

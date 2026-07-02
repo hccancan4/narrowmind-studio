@@ -15,8 +15,9 @@ members = ["workers/py"]
 # py-training is deliberately NOT a workspace member: it needs CUDA torch
 # while this workspace pins CPU torch, and uv workspaces share one lockfile —
 # the two torch sources cannot coexist there. It is a standalone uv project
-# with its own .venv + uv.lock, consuming narrowmind-workers as an editable
-# path dependency (one source tree, two environments). See docs/dev-setup.md.
+# with its own .venv + uv.lock; it does NOT path-depend on narrowmind-workers —
+# the orchestrator spawns it with PYTHONPATH=<repo>/workers/py (one source
+# tree, two environments). See docs/dev-setup.md.
 exclude = ["workers/py-training"]
 
 [tool.uv.sources]

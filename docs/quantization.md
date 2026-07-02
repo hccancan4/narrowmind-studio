@@ -71,7 +71,7 @@ PTQ imatrix conversions are the normal, well-tested path.
 
 > **Supersession of KARAR 8 / the Phase 6 deferral.** Phase 4 locked "adapter
 > HF format only, no GGUF merge — that's Phase 6" (KARAR 8; the comment still
-> lives at `training/runner.py`). Phase 4.6 deliberately **pulls the
+> lives at `workers/py/narrowmind_workers/training/runner.py`). Phase 4.6 deliberately **pulls the
 > merge→GGUF + imatrix export forward** because it is the memory backbone for
 > serving a domain model on 8 GB. Phase 6 keeps the *packaging* layer (Ollama
 > Modelfile, SDK, template repos); the GGUF production itself moves here.
@@ -92,9 +92,11 @@ lowest-risk part of the tier. Configured on `ModelSpec` (defaults in
   halves it, so longer RAG context (chunks + system prompt + query) fits on
   8 GB. `f16` is the exact-baseline opt-out; `q4_0` is the aggressive opt-in.
   A quantized cache auto-enables Flash Attention (llama.cpp requires it for a
-  quantized **value** cache). The `q8_0` default is gated on the 56-pair eval
-  holding (recall 0.98 / judge 4.55) — if it regresses, the fallback is a
-  one-flag flip back to `f16`.
+  quantized **value** cache). The `q8_0` default was gated on the 56-pair eval
+  and **passed** (2026-06-19): recall@5 0.98 unchanged, judge 4.46 vs the 4.55
+  f16 baseline (−0.09, within judge run-variance, no score≤2) — confirmed; the
+  fallback remains a one-flag flip back to `f16` (see `docs/testing.md →
+  Phase 4.6`).
 - **Prompt-prefix cache** (`prompt_cache`, default on). Reuses llama.cpp's
   host-RAM prompt cache so the shared system prompt + repeated RAG context
   aren't re-evaluated every request. No VRAM cost (`cache_type=ram`).
@@ -140,3 +142,15 @@ lowest-risk part of the tier. Configured on `ModelSpec` (defaults in
 | VRAM @ recommended quant | ~5 GB | ~6.6 GB |
 | Fine-tune (QLoRA, Unsloth) | supported, comfortable on 8 GB | supported, 8-10 GB — at the 3070 floor |
 | Turkish quality | eval'd informally in Phase 3 (dogfood corpus is EN) | unverified — eval before Turkish production use |
+
+**The smaller Qwen rungs follow the 7B's PTQ rule.** The registry
+(`crates/orchestrator/src/models.rs`) also carries the Qwen2.5 shrink-search
+ladder (3B / 1.5B / 0.5B — the **3B fine-tune is the shipped DSLM size**, see
+`docs/shrink-search-report.md`) and the Qwen3 ladder
+(`qwen3-4b-instruct-2507` / `qwen3-1.7b` / `qwen3-0.6b`, qwen3-arch
+smoke-load verified 2026-07-02 on the pinned runtime). No Qwen model has QAT
+checkpoints, so every rung is standard PTQ Q4_K_M — the per-rung differences
+are the GGUF pins (bartowski for the Qwen2.5 rungs + Qwen3-4B-2507;
+**unsloth** for Qwen3-1.7B/0.6B, so "we pin bartowski" holds for Qwen2.5
+only) and the Qwen3 hybrid rungs' `/no_think` serving contract, both recorded
+in each entry's `quantization_notes`.

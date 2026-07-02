@@ -546,6 +546,7 @@ fn truncate(s: &str, n: usize) -> String {
 ///   1. Explicit `model` tool arg (caller-supplied, wins everything).
 ///   2. `project.provider.synth_model` override (per-project Haiku-class cost hack).
 ///   3. `project.provider.model` (the agent loop model — last resort, expensive).
+///
 /// Returns the chosen model id plus a short string explaining which tier won; the
 /// caller logs it so users can see which budget pocket their `generate_sft` run hit.
 #[must_use]

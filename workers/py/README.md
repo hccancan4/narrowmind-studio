@@ -10,8 +10,8 @@ Python ML workers for NarrowMind Studio. Each worker is a long-lived process spe
 | `ingestion` | 2 | PDF / EPUB / DOCX / web / Wikipedia / HF datasets ingest |
 | `training` | 4 | Unsloth QLoRA fine-tuning (Axolotl optional) |
 | `inference` | 3 | llama.cpp server wrapper, OpenAI-compatible local endpoint |
-| `rag` | 3 | LlamaIndex + LanceDB + BGE-small |
-| `eval` | 5 | LLM-judge + lm-evaluation-harness + manual rating |
+| `rag` | 3 | LanceDB + BGE-small (sentence-transformers) + BM25/RRF hybrid retrieval |
+| `eval` | 5 | LLM-judge scoring lives Rust-side in `run_eval` (`tools/eval.rs`); manual rating UI planned |
 | `export` | 6 | GGUF conversion, quantization, Ollama Modelfile generation |
 
 Phase 0 ships only the `hello` RPC method to prove the orchestrator ↔ worker round-trip works.
