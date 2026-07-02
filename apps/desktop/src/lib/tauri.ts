@@ -51,17 +51,6 @@ export const agent = {
   turnCount: () => invoke<number>("agent_turn_count"),
 };
 
-export const debugCmd = {
-  helloRoundTrip: (name?: string) =>
-    invoke<{
-      message: string;
-      worker_version: string;
-      worker_pid: number;
-      python_version: string;
-      platform: string;
-    }>("hello_round_trip_cmd", { name }),
-};
-
 // ---------------------------------------------------------------------------
 // Chunks (Dataset Browser)
 // ---------------------------------------------------------------------------

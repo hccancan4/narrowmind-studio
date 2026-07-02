@@ -31,6 +31,7 @@ use serde_json::{json, Value};
 use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
+use super::chunks::ChunkRecord;
 use super::context::ToolContext;
 use super::registry::{Tool, ToolDef, ToolError, ToolResult};
 use crate::project::SynthConfig;
@@ -97,23 +98,6 @@ pub struct QaPair {
     pub answer: String,
     /// Backreference for auditing; the model never sees this field.
     pub source_chunk_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ChunkRecord {
-    chunk_id: String,
-    doc_id: String,
-    source_id: String,
-    text: String,
-    token_count: u32,
-    sentence_range: (u32, u32),
-    #[serde(default = "default_true")]
-    include: bool,
-    #[serde(default)]
-    metadata: Value,
-}
-fn default_true() -> bool {
-    true
 }
 
 pub struct GenerateSft;

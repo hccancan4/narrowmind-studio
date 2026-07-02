@@ -16,7 +16,6 @@ use std::fmt::Write as _;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -604,10 +603,6 @@ fn load_pairs(path: &std::path::Path) -> Result<Vec<EvalPair>, ToolError> {
     }
     Ok(out)
 }
-
-// Reserved for future tunables. Kept here so dead-code lint stays quiet.
-#[allow(dead_code)]
-const _DUR_MARKER: Duration = Duration::from_secs(0);
 
 #[cfg(test)]
 mod tests {

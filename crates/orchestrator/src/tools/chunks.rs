@@ -59,18 +59,19 @@ struct FilterChunksArgs {
 }
 
 /// On-disk schema for one line in `chunks.jsonl`. Mirrors `narrowmind_workers.chunking.Chunk`.
+/// Shared with `synth_gen`, which samples the same files (crate-visible for that reason).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ChunkRecord {
-    chunk_id: String,
-    doc_id: String,
-    source_id: String,
-    text: String,
-    token_count: u32,
-    sentence_range: (u32, u32),
+pub(crate) struct ChunkRecord {
+    pub(crate) chunk_id: String,
+    pub(crate) doc_id: String,
+    pub(crate) source_id: String,
+    pub(crate) text: String,
+    pub(crate) token_count: u32,
+    pub(crate) sentence_range: (u32, u32),
     #[serde(default = "default_true")]
-    include: bool,
+    pub(crate) include: bool,
     #[serde(default)]
-    metadata: Value,
+    pub(crate) metadata: Value,
 }
 
 fn default_true() -> bool {
